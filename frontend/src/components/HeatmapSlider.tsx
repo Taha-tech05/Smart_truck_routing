@@ -15,6 +15,8 @@ interface Props {
   loading?: boolean
   failed?: boolean
   onRetry?: () => void
+  /** Heatmap loaded and every point is Low at the current hour. */
+  noRisk?: boolean
 }
 
 const TICKS = [0, 12, 24, 36, 48]
@@ -105,6 +107,7 @@ function HeatmapSlider({
   loading = false,
   failed = false,
   onRetry,
+  noRisk = false,
 }: Props) {
   const id = useId()
   const label = formatHour(at(start, hour))
@@ -168,6 +171,12 @@ function HeatmapSlider({
             </button>
           )}
         </div>
+        {noRisk && (
+          <p className="col-span-4 mt-1 flex items-center gap-1.5 text-xs text-muted" role="status">
+            <Info size={12} className="shrink-0" aria-hidden="true" />
+            No weather risk along this corridor at this hour.
+          </p>
+        )}
       </div>
     </section>
   )

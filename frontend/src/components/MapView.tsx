@@ -24,6 +24,7 @@ const DARK_STYLE =
   'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
 
 const SLOTS = 3
+const DEBUG_HEATMAP = import.meta.env.VITE_DEBUG_HEATMAP === 'true'
 const HEAT_SRC = ['heat-a', 'heat-b'] as const
 const HEAT_LAYER = ['heat-a-layer', 'heat-b-layer'] as const
 const HEAT_OPACITY = 0.8
@@ -48,6 +49,8 @@ interface Props {
   isMobile: boolean
   /** Changes whenever a new analysis arrives; fits all routes. */
   fitKey: number
+  /** City names of the trip's endpoints: their basemap labels are hidden so pins never cover text. */
+  endpointNames?: string[]
 }
 
 const styleFor = (t: Theme) => (t === 'dark' ? DARK_STYLE : LIGHT_STYLE)
@@ -85,6 +88,8 @@ function heatFeatures(data: HeatmapResponse, hour: number): FeatureCollection {
   data.levels.forEach((s, i) => {
     const code = s.charCodeAt(hour) - 48
     out[i].properties.w = code >= 0 && code <= 4 ? code : 0 // 0 (Low) is transparent
+    // VITE_DEBUG_HEATMAP=true forces a few points to High..No Travel so the layer can be checked visually
+    if (DEBUG_HEATMAP && i % 6 === 0) out[i].properties.w = 3 + (i % 12 === 0 ? 1 : 0)
   })
   return { type: 'FeatureCollection', features: out }
 }
@@ -112,11 +117,23 @@ function panelWidth(): number {
   return Number.isFinite(v) ? v : 400
 }
 
-/** Quieter basemap: fewer, fainter labels, and in dark mode a lifted land / water / road palette. */
+/**
+ * Basemap label + palette tuning. Place labels stay visible with zoom tiers (large cities from zoom 4,
+ * mid cities from 6, towns from 8); state / country / water labels are muted and smaller; road, POI and
+ * house-number labels are dropped. In dark mode land, water and roads are lifted for contrast.
+ */
+const LARGE = /^(label_city_capital|label_city|place_city_r5|place_capital_dot_z7)$/
+const MID = /^(label_town|place_city_r6|place_city_dot_(r7|r4|r2|z7))$/
+const TOWN = /^(label_village|place_town)$/
+const SMALL = /^(place_villages|place_suburbs|place_hamlet)$/
+const REGION = /^(label_state|label_country|place_state|place_country|place_continent|water_name|watername_(ocean|sea|lake)$)/
+const NOISE = /^(roadname|housenumber|poi_|highway-name|highway-shield|road_shield|airport|label_other|waterway|watername_lake_(pois|line)|water_name_line)/
+
 function tuneBasemap(map: MapLibreMap, theme: Theme) {
-  const hide =
-    /^(place_hamlet|place_suburbs|place_villages|place_(city|capital)_dot|roadname|housenumber|poi_|highway-name|highway-shield|road_shield|airport|label_other|label_village|waterway|watername_lake_(pois|line)|water_name_line)/
   const dark = theme === 'dark'
+  const place = dark ? { color: '#C9D3E3', halo: '#0B1220' } : { color: '#2b3646', halo: '#ffffff' }
+  const region = dark ? { color: '#7f8da3', halo: '#0B1220' } : { color: '#8a96a8', halo: '#ffffff' }
+  const size = (z0: number, s0: number, z1: number, s1: number) => ['interpolate', ['linear'], ['zoom'], z0, s0, z1, s1]
   const darkPaint: Record<string, [string, string]> = {
     background: ['background-color', '#2c3d56'],
     water: ['fill-color', '#12263f'],
@@ -129,23 +146,29 @@ function tuneBasemap(map: MapLibreMap, theme: Theme) {
     boundary_state: ['line-color', '#5a6d8a'],
     boundary_county: ['line-color', '#34465f'],
   }
+  const text = (id: string, c: { color: string; halo: string }, opacity: number, sz: unknown, minzoom?: number) => {
+    map.setPaintProperty(id, 'text-color', c.color)
+    map.setPaintProperty(id, 'text-halo-color', c.halo)
+    map.setPaintProperty(id, 'text-halo-width', 1.5)
+    map.setPaintProperty(id, 'text-opacity', opacity)
+    map.setLayoutProperty(id, 'text-size', sz as never)
+    if (minzoom !== undefined) map.setLayerZoomRange(id, minzoom, 24)
+  }
   for (const layer of map.getStyle().layers) {
+    const id = layer.id
     try {
       if (layer.type === 'symbol') {
-        if (hide.test(layer.id)) {
-          map.setLayoutProperty(layer.id, 'visibility', 'none')
-          continue
-        }
-        const small = /state|country|continent/.test(layer.id)
-        map.setLayoutProperty(layer.id, 'text-size', ['interpolate', ['linear'], ['zoom'], 3, small ? 8 : 9, 8, small ? 10 : 12])
-        map.setPaintProperty(layer.id, 'text-opacity', 0.6)
+        if (NOISE.test(id)) map.setLayoutProperty(id, 'visibility', 'none')
+        else if (LARGE.test(id)) text(id, place, 1, size(4, 11, 8, 15), 4)
+        else if (MID.test(id)) text(id, place, 1, size(6, 10, 9, 12), 6)
+        else if (TOWN.test(id)) text(id, place, 1, size(8, 10, 11, 12), 8)
+        else if (SMALL.test(id)) text(id, place, 0.9, size(9, 10, 12, 11), 9)
+        else if (REGION.test(id)) text(id, region, 0.75, size(3, 8, 8, 10))
       } else if (dark) {
-        const p = darkPaint[layer.id]
-        if (p) map.setPaintProperty(layer.id, p[0] as never, p[1] as never)
-        else if (layer.type === 'line' && /^(road|bridge|tunnel)_.*_fill/.test(layer.id))
-          map.setPaintProperty(layer.id, 'line-color', '#5b7092')
-        else if (layer.type === 'line' && /^(road|bridge|tunnel)_.*_case/.test(layer.id))
-          map.setPaintProperty(layer.id, 'line-color', '#2c3d56')
+        const p = darkPaint[id]
+        if (p) map.setPaintProperty(id, p[0] as never, p[1] as never)
+        else if (layer.type === 'line' && /^(road|bridge|tunnel)_.*_fill/.test(id)) map.setPaintProperty(id, 'line-color', '#5b7092')
+        else if (layer.type === 'line' && /^(road|bridge|tunnel)_.*_case/.test(id)) map.setPaintProperty(id, 'line-color', '#2c3d56')
       }
     } catch {
       /* layer without that property: ignore */
@@ -153,8 +176,26 @@ function tuneBasemap(map: MapLibreMap, theme: Theme) {
   }
 }
 
+/** Hide the basemap labels of the given city names (the pins stand in for them) via a data-driven text-opacity. */
+function hideEndpointLabels(map: MapLibreMap, names: string[]) {
+  const opacity = names.length ? ['match', ['get', 'name'], names, 0, 1] : 1
+  for (const layer of map.getStyle().layers) {
+    if (layer.type !== 'symbol' || !(LARGE.test(layer.id) || MID.test(layer.id) || TOWN.test(layer.id))) continue
+    try {
+      map.setPaintProperty(layer.id, 'text-opacity', opacity as never)
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/** Our data layers go BELOW the first label layer: basemap fills < heatmap < routes < labels. */
+function labelAnchor(map: MapLibreMap): string | undefined {
+  return map.getStyle().layers.find((l) => l.type === 'symbol' && map.getLayoutProperty(l.id, 'visibility') !== 'none')?.id
+}
+
 export default function MapView(props: Props) {
-  const { theme, routes, selectedId, heatmap, isMobile, fitKey } = props
+  const { theme, routes, selectedId, heatmap, isMobile, fitKey, endpointNames } = props
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const propsRef = useRef(props)
@@ -280,6 +321,7 @@ export default function MapView(props: Props) {
     if (!map || !styleVersion) return
     const surface = tokenColor('--surface')
     const muted = tokenColor('--route-muted')
+    const anchor = labelAnchor(map)
     for (let i = 0; i < SLOTS; i++) {
       const r = routes?.[i]
       const sel = !!r && r.id === selectedId
@@ -292,11 +334,11 @@ export default function MapView(props: Props) {
       map.setPaintProperty(casingLayer(i), 'line-width', 9)
       map.setPaintProperty(casingLayer(i), 'line-opacity', sel ? 1 : 0)
       if (sel) {
-        map.moveLayer(casingLayer(i))
-        map.moveLayer(lineLayer(i))
+        map.moveLayer(casingLayer(i), anchor)
+        map.moveLayer(lineLayer(i), anchor)
       }
     }
-    CP_LAYERS.forEach((id) => map.moveLayer(id))
+    CP_LAYERS.forEach((id) => map.moveLayer(id, anchor))
 
     const selected = routes?.find((r) => r.id === selectedId)
     ;(map.getSource(CP_SRC) as GeoJSONSource | undefined)?.setData(selected ? checkpointPoints(selected) : EMPTY_FC)
@@ -314,6 +356,14 @@ export default function MapView(props: Props) {
       ]
     }
   }, [routes, selectedId, styleVersion])
+
+  // ---- keep city labels from sitting under the start/end pins ----
+  const namesKey = (endpointNames ?? []).join('|')
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !styleVersion) return
+    hideEndpointLabels(map, namesKey ? namesKey.split('|') : [])
+  }, [namesKey, styleVersion])
 
   // ---- camera: fit all routes on a new analysis, the selected one on selection ----------------
   useEffect(() => {
@@ -403,6 +453,7 @@ function ZoomButton({ label, onClick, children }: { label: string; onClick: () =
 
 /** Add all sources/layers (empty) once per loaded style. Data is pushed by the effects above. */
 function addLayers(map: MapLibreMap) {
+  const before = labelAnchor(map)
   const surface = tokenColor('--surface')
   const mod = tokenColor('--risk-moderate')
   const high = tokenColor('--risk-high')
@@ -420,23 +471,23 @@ function addLayers(map: MapLibreMap) {
       layout: { visibility: 'none' },
       paint: {
         'heatmap-weight': ['/', ['get', 'w'], 4],
-        'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 3, 0.16, 8, 0.4],
+        'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 3, 0.6, 8, 1.2],
         'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 3, 24, 5, 40, 8, 90, 10, 150],
         'heatmap-color': [
           'interpolate',
           ['linear'],
           ['heatmap-density'],
           0, rgba(mod, 0),
-          0.08, rgba(mod, 0),
-          0.25, rgba(mod, 0.35),
-          0.5, rgba(high, 0.5),
-          0.75, rgba(severe, 0.6),
-          1, rgba(stop, 0.7),
+          0.03, rgba(mod, 0),
+          0.12, rgba(mod, 0.35),
+          0.35, rgba(high, 0.5),
+          0.6, rgba(severe, 0.6),
+          0.9, rgba(stop, 0.7),
         ] as never,
         'heatmap-opacity': 0,
         'heatmap-opacity-transition': { duration: 350, delay: 0 },
       },
-    })
+    }, before)
   })
 
   // Added in reverse so slot 0 (the best-ranked route) is drawn on top; the selected one is moved up later.
@@ -448,14 +499,14 @@ function addLayers(map: MapLibreMap) {
       source: routeSrc(i),
       layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: { 'line-color': surface, 'line-width': 9, 'line-opacity': 0 },
-    })
+    }, before)
     map.addLayer({
       id: lineLayer(i),
       type: 'line',
       source: routeSrc(i),
       layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: { 'line-color': tokenColor('--route-muted'), 'line-width': 3, 'line-opacity': 0.6 },
-    })
+    }, before)
   }
 
   // Checkpoint dots: 6px with a 1.5px surface ring, 10px on hover. Odd-numbered dots appear from zoom 6.
@@ -474,7 +525,7 @@ function addLayers(map: MapLibreMap) {
         'circle-stroke-color': surface,
         'circle-stroke-width': 1.5,
       },
-    })
+    }, before)
   dot(CP_LAYERS[0], ['==', ['%', ['get', 'index'], 2], 0], 0)
   dot(CP_LAYERS[1], ['!=', ['%', ['get', 'index'], 2], 0], 6)
 }

@@ -63,6 +63,7 @@ export default function App() {
   const selected = analysis?.routes.find((r) => r.id === selectedId) ?? null
   const heat = useHeatmap(selected, request?.load_weight_lb ?? 0, request?.departure_time ?? '', heatOn && !!request)
   const heatStart = useMemo(() => (heat.data ? new Date(heat.data.start_time) : currentHour()), [heat.data])
+  const noRisk = !!heat.data && !heat.data.levels.some((l) => (l[hour] ?? '0') !== '0')
   const maxHour = heat.data ? heat.data.hours - 1 : 48
 
   useEffect(() => {
@@ -171,6 +172,7 @@ export default function App() {
       hours={maxHour}
       loading={heat.isFetching && !heat.data}
       failed={heat.isError}
+      noRisk={noRisk}
       onRetry={() => void heat.refetch()}
     />
   )
@@ -185,6 +187,7 @@ export default function App() {
         heatmap={heatmap}
         isMobile={isMobile}
         fitKey={fitKey}
+        endpointNames={request ? [shortName(request.origin.label), shortName(request.destination.label)] : []}
       />
 
       {isMobile ? (

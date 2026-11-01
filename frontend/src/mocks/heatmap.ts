@@ -10,8 +10,8 @@ import { assess, fakeWeather } from './riskModel'
 import { cumulative, type LngLat } from '../utils/geo'
 
 const OFFSETS_MI = [-30, -15, 0, 15, 30]
-const STEP_MI = 12
-const DEDUPE_MI = 8
+const STEP_MI = 25
+const DEDUPE_MI = 14
 
 function build(): HeatmapResponse {
   const points: [number, number, number][] = []
