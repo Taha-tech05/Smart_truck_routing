@@ -204,3 +204,27 @@ def test_missing_api_key_raises(settings):
     settings.ORS_API_KEY = ""
     with pytest.raises(rc.RoutingAuthError):
         rc.get_routes(ORIGIN, DEST)
+
+
+def test_grid_nearest_matches_brute_force():
+    """The spatial-grid lookup must agree with a naive scan over all segments."""
+    import random
+
+    rnd = random.Random(7)
+    line = [(-100.0 + i * 0.01 + rnd.uniform(-0.02, 0.02), 40.0 + i * 0.008 + rnd.uniform(-0.02, 0.02))
+            for i in range(400)]
+    poly = rc._Poly(line)
+    for _ in range(300):
+        p = (rnd.uniform(-100.2, -95.8), rnd.uniform(39.8, 43.4))
+        brute = min(rc._dist_point_to_segment_miles(p, a, b) for a, b in zip(line, line[1:])) <= 1.0
+        assert poly.is_near(p, 1.0) == brute
+
+
+def test_long_route_duplicate_check_is_fast():
+    import time
+
+    line = [(-100.0 + i * 0.001, 40.0 + i * 0.0007) for i in range(8000)]
+    other = [(x + 0.002, y) for x, y in line]
+    start = time.perf_counter()
+    assert rc.is_duplicate(line, other)
+    assert time.perf_counter() - start < 1.0

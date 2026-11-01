@@ -10,6 +10,7 @@ so the covered stretches tile the route exactly.
 from __future__ import annotations
 
 import math
+from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -59,6 +60,26 @@ def route_length_miles(coordinates: list[Coord]) -> float:
     )
 
 
+def cumulative_miles(coordinates: list[Coord]) -> list[float]:
+    """Cumulative distance in miles at each vertex (``cum[0] == 0``)."""
+    cum = [0.0]
+    for a, b in zip(coordinates, coordinates[1:]):
+        cum.append(cum[-1] + haversine_miles(a[1], a[0], b[1], b[0]))
+    return cum
+
+
+def interpolate_at(coordinates: list[Coord], cum: list[float], mile: float) -> Coord:
+    """``(lng, lat)`` at ``mile`` given precomputed ``cum`` (O(log n) per lookup)."""
+    if mile <= 0:
+        return coordinates[0]
+    if mile >= cum[-1]:
+        return coordinates[-1]
+    i = bisect_left(cum, mile)  # first vertex with cum[i] >= mile, so cum[i-1] < mile
+    a, b = coordinates[i - 1], coordinates[i]
+    f = (mile - cum[i - 1]) / (cum[i] - cum[i - 1])
+    return (a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f)
+
+
 def point_at_mile(coordinates: list[Coord], mile: float) -> Coord:
     """Return the ``(lng, lat)`` at ``mile`` along the polyline (linear interpolation).
 
@@ -66,18 +87,7 @@ def point_at_mile(coordinates: list[Coord], mile: float) -> Coord:
     """
     if len(coordinates) < 2:
         raise ValueError("at least 2 coordinates are required")
-    if mile <= 0:
-        return coordinates[0]
-    walked = 0.0
-    for a, b in zip(coordinates, coordinates[1:]):
-        seg = haversine_miles(a[1], a[0], b[1], b[0])
-        if seg == 0:
-            continue
-        if walked + seg >= mile:
-            f = (mile - walked) / seg
-            return (a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f)
-        walked += seg
-    return coordinates[-1]
+    return interpolate_at(coordinates, cumulative_miles(coordinates), mile)
 
 
 def sample_checkpoints(
@@ -101,7 +111,8 @@ def sample_checkpoints(
         raise ValueError("at least 2 coordinates are required")
 
     coords = _dedupe(list(coordinates))
-    total = route_length_miles(coords)
+    cum = cumulative_miles(coords)
+    total = cum[-1]
     if len(coords) < 2 or total <= 0:
         raise ValueError("route has zero length")
 
@@ -119,7 +130,7 @@ def sample_checkpoints(
     for i, mile in enumerate(miles):
         start = 0.0 if i == 0 else (miles[i - 1] + mile) / 2
         end = total if i == len(miles) - 1 else (mile + miles[i + 1]) / 2
-        lng, lat = point_at_mile(coords, mile)
+        lng, lat = interpolate_at(coords, cum, mile)
         eta = departure + timedelta(seconds=(mile / total) * total_duration_s)
         result.append(Checkpoint(i, lat, lng, mile, eta, start, end, end - start))
     return result

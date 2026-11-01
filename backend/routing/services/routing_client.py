@@ -36,7 +36,7 @@ from ..constants import (
     MILES_PER_METER,
     ORS_BASE_URL,
 )
-from .checkpoints import Coord, point_at_mile, route_length_miles
+from .checkpoints import Coord, cumulative_miles, interpolate_at, point_at_mile, route_length_miles
 
 PROFILE = "driving-hgv"
 MAX_ROUTES = 3
@@ -209,27 +209,61 @@ def _dist_point_to_segment_miles(p: Coord, a: Coord, b: Coord) -> float:
     return math.hypot(ax + t * dx, ay + t * dy)
 
 
-def _distance_to_polyline_miles(p: Coord, line: list[Coord]) -> float:
-    return min(_dist_point_to_segment_miles(p, a, b) for a, b in zip(line, line[1:]))
+_CELL_DEG = 0.05  # ~3.5 mi: wider than the 1-mile duplicate radius
 
 
-def _sample(coords: list[Coord], n: int = SAMPLE_POINTS) -> list[Coord]:
-    length = route_length_miles(coords)
-    if length == 0:
-        return [coords[0]]
-    return [point_at_mile(coords, length * i / (n - 1)) for i in range(n)]
+class _Poly:
+    """A polyline prepared for fast sampling and nearest-segment queries.
+
+    Cumulative lengths give O(log n) sampling; a coarse grid of segment indices
+    limits distance checks to segments near the query point (a naive scan of
+    ~6,000 segments per sample point made long routes take seconds).
+    """
+
+    def __init__(self, coords: list[Coord]):
+        self.coords = coords
+        self.cum = cumulative_miles(coords)
+        self.length = self.cum[-1]
+        self.grid: dict[tuple[int, int], list[int]] = {}
+        for i, (a, b) in enumerate(zip(coords, coords[1:])):
+            x0, x1 = sorted((math.floor(a[0] / _CELL_DEG), math.floor(b[0] / _CELL_DEG)))
+            y0, y1 = sorted((math.floor(a[1] / _CELL_DEG), math.floor(b[1] / _CELL_DEG)))
+            for cx in range(x0, x1 + 1):
+                for cy in range(y0, y1 + 1):
+                    self.grid.setdefault((cx, cy), []).append(i)
+
+    def samples(self, n: int = SAMPLE_POINTS) -> list[Coord]:
+        if self.length == 0:
+            return [self.coords[0]]
+        return [interpolate_at(self.coords, self.cum, self.length * i / (n - 1)) for i in range(n)]
+
+    def is_near(self, p: Coord, radius_miles: float) -> bool:
+        cx, cy = math.floor(p[0] / _CELL_DEG), math.floor(p[1] / _CELL_DEG)
+        seen: set[int] = set()
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for i in self.grid.get((cx + dx, cy + dy), ()):
+                    if i in seen:
+                        continue
+                    seen.add(i)
+                    if _dist_point_to_segment_miles(p, self.coords[i], self.coords[i + 1]) <= radius_miles:
+                        return True
+        return False
 
 
-def _fraction_near(a: list[Coord], b: list[Coord]) -> float:
+def _fraction_near(a: _Poly, b: _Poly) -> float:
     """Fraction of sampled points of ``a`` within 1 mile of polyline ``b``."""
-    pts = _sample(a)
-    near = sum(1 for p in pts if _distance_to_polyline_miles(p, b) <= DUPLICATE_RADIUS_MILES)
-    return near / len(pts)
+    pts = a.samples()
+    return sum(1 for p in pts if b.is_near(p, DUPLICATE_RADIUS_MILES)) / len(pts)
+
+
+def _poly_duplicate(a: _Poly, b: _Poly) -> bool:
+    return _fraction_near(a, b) > DUPLICATE_FRACTION and _fraction_near(b, a) > DUPLICATE_FRACTION
 
 
 def is_duplicate(a: list[Coord], b: list[Coord]) -> bool:
     """True if >90% of each route's sampled points lie within 1 mile of the other."""
-    return _fraction_near(a, b) > DUPLICATE_FRACTION and _fraction_near(b, a) > DUPLICATE_FRACTION
+    return _poly_duplicate(_Poly(a), _Poly(b))
 
 
 # ---------------------------------------------------------------- parsing
@@ -307,10 +341,15 @@ def get_routes(
     candidates: list[tuple[float, float, list[Coord]]] = []
     via_candidates: list[tuple[float, float, list[Coord]]] = []
 
+    polys: dict[int, _Poly] = {}  # prepared polylines, keyed by the coords list identity
+
+    def poly(item: tuple[float, float, list[Coord]]) -> _Poly:
+        return polys.setdefault(id(item[2]), _Poly(item[2]))
+
     def distinct(items: list[tuple[float, float, list[Coord]]]) -> list:
         kept: list = []
         for item in sorted(items, key=lambda r: r[1]):
-            if not any(is_duplicate(item[2], k[2]) for k in kept):
+            if not any(_poly_duplicate(poly(item), poly(k)) for k in kept):
                 kept.append(item)
         return kept
 
