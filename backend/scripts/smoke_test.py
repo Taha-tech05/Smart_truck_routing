@@ -147,8 +147,10 @@ def verify_weather(result: dict) -> bool:
     mine = c["weather"]
     rounded = raw(round(c["lat"], 1), round(c["lng"], 1))
     exact = raw(c["lat"], c["lng"])
-    keys = ("wind_mph", "rain_in_hr", "snow_in_hr")
-    match = all(abs(mine[k] - rounded[k]) < 0.01 for k in keys)
+    # Tolerances cover Open-Meteo's own output rounding (0.1 km/h ~ 0.06 mph, 0.01 mm,
+    # 0.01 cm) that is amplified when the km/h/mm/cm values are converted here.
+    tolerance = {"wind_mph": 0.1, "rain_in_hr": 0.002, "snow_in_hr": 0.005}
+    match = all(abs(mine[k] - rounded[k]) <= tol for k, tol in tolerance.items())
     print(f"Weather verification: {route_id} mile {c['mile']} at ({c['lat']:.3f}, {c['lng']:.3f}), "
           f"ETA {eta:%H:%M}Z -> hour used {hour_key}Z")
     print(f"    ours            wind {mine['wind_mph']:.3f}  rain {mine['rain_in_hr']:.4f}  snow {mine['snow_in_hr']:.4f}")
