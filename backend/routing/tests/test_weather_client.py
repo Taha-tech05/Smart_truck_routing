@@ -190,3 +190,62 @@ def test_malformed_response_raises():
     respx.get(OPEN_METEO_BASE_URL).mock(return_value=httpx.Response(200, json={"oops": 1}))
     with pytest.raises(wc.WeatherError):
         wc.get_hourly_weather([(30.0, -100.0)])
+
+
+# ---------------------------------------------------------------- cache precision
+
+def requested_lats(route):
+    return [float(x) for c in route.calls for x in c.request.url.params["latitude"].split(",")]
+
+
+def test_cache_key_includes_precision():
+    p = (35.04, -100.04)
+    assert wc.cache_key(p) == (1, 35.0, -100.0)
+    assert wc.cache_key(p, 2) == (2, 35.04, -100.04)
+    assert wc.cache_key(p, 1) != wc.cache_key(p, 2)
+    # same rounded numbers at different precision never collide
+    assert wc.cache_key((35.0, -100.0), 1) != wc.cache_key((35.0, -100.0), 2)
+
+
+@respx.mock
+def test_points_004_apart_share_entry_at_precision_1_but_not_2():
+    route = respx.get(OPEN_METEO_BASE_URL).mock(side_effect=handler)
+    a, b = (35.01, -100.0), (35.05, -100.0)  # 0.04 degrees apart
+    wc.get_hourly_weather([a, b], precision=1)
+    assert requested_lats(route) == [35.0]  # one shared cell
+    wc.clear_cache()
+    first = route.call_count
+    wc.get_hourly_weather([a, b], precision=2)
+    second = [float(x) for c in route.calls[first:] for x in c.request.url.params["latitude"].split(",")]
+    assert second == [35.01, 35.05]  # separate entries
+
+
+@respx.mock
+def test_precision_2_returns_each_points_own_weather():
+    respx.get(OPEN_METEO_BASE_URL).mock(side_effect=handler)  # wind = latitude requested
+    a, b = (35.01, -100.0), (35.05, -100.0)
+    out = wc.get_hourly_weather([a, b], precision=2)
+    assert out[a][0].wind_mph == 35.01 and out[b][0].wind_mph == 35.05
+    wc.clear_cache()
+    coarse = wc.get_hourly_weather([a, b], precision=1)
+    assert coarse[a][0].wind_mph == coarse[b][0].wind_mph == 35.0  # served the shared cell
+
+
+@respx.mock
+def test_precisions_do_not_share_or_collide_in_cache():
+    route = respx.get(OPEN_METEO_BASE_URL).mock(side_effect=handler)
+    p = (35.0, -100.0)
+    wc.get_hourly_weather([p], precision=1)
+    wc.get_hourly_weather([p], precision=2)
+    assert route.call_count == 2          # not served from the other precision's entry
+    wc.get_hourly_weather([p], precision=1)
+    wc.get_hourly_weather([p], precision=2)
+    assert route.call_count == 2          # but each is cached on its own
+
+
+@respx.mock
+def test_weather_at_passes_precision_through():
+    route = respx.get(OPEN_METEO_BASE_URL).mock(side_effect=handler)
+    eta = datetime(2026, 11, 2, 13, 0, tzinfo=UTC)
+    [w] = wc.weather_at([(35.04, -100.0, eta)], precision=2)
+    assert requested_lats(route) == [35.04] and w.wind_mph == pytest.approx(35.04 + 0.13)

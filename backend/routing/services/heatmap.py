@@ -19,6 +19,7 @@ from typing import Any
 
 from ..constants import (
     GRID_DEDUPE_MILES,
+    WEATHER_PRECISION_DEFAULT,
     HEATMAP_HOURS,
     MAX_GRID_POINTS,
     MAX_ROUTE_VERTICES,
@@ -175,7 +176,9 @@ def build_heatmap(
     warnings.extend(grid_warnings)
 
     pts = [(g.lat, g.lng) for g in grid]
-    hourly = weather_client.get_hourly_weather(pts, hours_ahead=HEATMAP_HOURS)
+    hourly = weather_client.get_hourly_weather(
+        pts, hours_ahead=HEATMAP_HOURS, precision=WEATHER_PRECISION_DEFAULT
+    )
 
     levels: list[str] = []
     missing = 0

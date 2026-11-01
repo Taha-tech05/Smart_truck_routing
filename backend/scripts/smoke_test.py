@@ -111,10 +111,10 @@ def verify_weather(result: dict) -> bool:
 
     The raw call is independent of weather_client: its own httpx request in the
     API's NATIVE units (km/h, mm, cm), converted here, with the hour located by
-    matching the time string. It uses the same rounded (0.1 degree) coordinates
+    matching the time string. It uses the same rounded (0.01 degree) coordinates
     the client requests, so the comparison isolates parsing, units, hour index
     and rain-vs-precipitation. Values at the exact checkpoint lat/lng are shown
-    for information (they can differ slightly because of that rounding).
+    for information (they can differ slightly because of that 0.01 degree rounding).
     """
     best = None
     for r in result["routes"]:
@@ -147,7 +147,7 @@ def verify_weather(result: dict) -> bool:
         }
 
     mine = c["weather"]
-    rounded = raw(round(c["lat"], 1), round(c["lng"], 1))
+    rounded = raw(round(c["lat"], 2), round(c["lng"], 2))
     exact = raw(c["lat"], c["lng"])
     # Tolerances cover Open-Meteo's own output rounding (0.1 km/h ~ 0.06 mph, 0.01 mm,
     # 0.01 cm) that is amplified when the km/h/mm/cm values are converted here.

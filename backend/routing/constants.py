@@ -23,3 +23,7 @@ MAX_CORRIDOR_MILES = 60
 GRID_DEDUPE_MILES = 7              # weather cache cells are 0.1 degrees (~7 mi)
 MAX_ROUTE_VERTICES = 5000          # longer geometries are simplified server-side
 MAX_REQUEST_VERTICES = 50_000      # hard request limit (abuse guard)
+
+# Weather cache key precision (decimal places of lat/lng).
+WEATHER_PRECISION_DEFAULT = 1      # 0.1 degree (~7 mi): fine for the smoothed heatmap
+WEATHER_PRECISION_ANALYZE = 2      # 0.01 degree (~0.7 mi): a checkpoint never gets another place's weather

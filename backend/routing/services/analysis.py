@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from ..constants import WEATHER_PRECISION_ANALYZE
 from . import routing_client, weather_client
 from .checkpoints import sample_checkpoints
 from .recommend import (
@@ -88,7 +89,7 @@ def analyze_trip(
     # One batched weather call for every checkpoint of every route (the weather
     # client de-duplicates and caches overlapping points).
     queries = [(cp.lat, cp.lng, cp.eta) for cps in sampled for cp in cps]
-    weather = weather_client.weather_at(queries)
+    weather = weather_client.weather_at(queries, precision=WEATHER_PRECISION_ANALYZE)
 
     route_payloads: dict[str, dict[str, Any]] = {}
     ranked_input: list[tuple[str, RouteStats]] = []

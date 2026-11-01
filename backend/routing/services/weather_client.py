@@ -10,8 +10,12 @@ are already mph and inches/hour: the risk code never converts units.
 
 Batching: many coordinates go into one request (comma-separated ``latitude`` /
 ``longitude`` lists), chunked at 50 points per request, chunks fetched
-concurrently. Results are cached in memory per (round(lat, 1), round(lng, 1))
-for 30 minutes, so overlapping routes cost nothing extra.
+concurrently. Results are cached in memory for 30 minutes, keyed by
+``(precision, round(lat, precision), round(lng, precision))``. ``precision`` is
+chosen per call: 1 decimal (~7 mi) by default, 2 decimals (~0.7 mi) for route
+analysis where a checkpoint must not be served another location's weather. The
+precision is part of the key, so the two never collide. The coordinates sent to
+Open-Meteo are the rounded ones.
 """
 from __future__ import annotations
 
@@ -24,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from ..constants import HTTP_TIMEOUT_S, OPEN_METEO_BASE_URL
+from ..constants import HTTP_TIMEOUT_S, OPEN_METEO_BASE_URL, WEATHER_PRECISION_DEFAULT
 
 CHUNK_SIZE = 50
 CACHE_TTL_S = 30 * 60
@@ -34,7 +38,7 @@ MAX_WORKERS = 4
 HOURLY_VARS = "wind_speed_10m,rain,snowfall"
 
 Point = tuple[float, float]  # (lat, lng)
-CacheKey = tuple[float, float]
+CacheKey = tuple[int, float, float]  # (precision, lat, lng)
 
 
 class WeatherError(Exception):
@@ -77,8 +81,9 @@ def clear_cache() -> None:
         _cache.clear()
 
 
-def cache_key(point: Point) -> CacheKey:
-    return (round(point[0], 1), round(point[1], 1))
+def cache_key(point: Point, precision: int = WEATHER_PRECISION_DEFAULT) -> CacheKey:
+    """Cache key for ``point`` at ``precision`` decimal places (precision is part of the key)."""
+    return (precision, round(point[0], precision), round(point[1], precision))
 
 
 def _cache_get(key: CacheKey) -> list[HourlyRecord] | None:
@@ -113,8 +118,8 @@ def _get_client() -> httpx.Client:
 def _fetch_chunk(keys: list[CacheKey], forecast_days: int) -> list[list[HourlyRecord]]:
     """Fetch one batch of locations (with retries); returns records per key, in order."""
     params = {
-        "latitude": ",".join(str(k[0]) for k in keys),
-        "longitude": ",".join(str(k[1]) for k in keys),
+        "latitude": ",".join(str(k[1]) for k in keys),
+        "longitude": ",".join(str(k[2]) for k in keys),
         "hourly": HOURLY_VARS,
         "wind_speed_unit": "mph",
         "precipitation_unit": "inch",
@@ -181,18 +186,21 @@ def _parse(resp: httpx.Response, expected: int) -> list[list[HourlyRecord]]:
 # ---------------------------------------------------------------- public API
 
 def get_hourly_weather(
-    points: list[Point], hours_ahead: int = 48
+    points: list[Point],
+    hours_ahead: int = 48,
+    precision: int = WEATHER_PRECISION_DEFAULT,
 ) -> dict[Point, list[HourlyRecord]]:
     """Hourly records for each ``(lat, lng)`` point, keyed by the point as given.
 
     ``hours_ahead`` sets the number of forecast days requested
-    (``ceil(hours_ahead / 24) + 1``, i.e. 3 days for 48 hours).
+    (``ceil(hours_ahead / 24) + 1``, i.e. 3 days for 48 hours). ``precision`` is the
+    number of decimals used for the cache key and the coordinates actually requested.
     """
     forecast_days = min(16, max(1, math.ceil(hours_ahead / 24) + 1))
     missing: list[CacheKey] = []
     seen: set[CacheKey] = set()
     for p in points:
-        k = cache_key(p)
+        k = cache_key(p, precision)
         if k not in seen and _cache_get(k) is None:
             missing.append(k)
         seen.add(k)
@@ -207,7 +215,7 @@ def get_hourly_weather(
 
     out: dict[Point, list[HourlyRecord]] = {}
     for p in points:
-        records = _cache_get(cache_key(p))
+        records = _cache_get(cache_key(p, precision))
         if records is None:  # expired mid-call (extremely unlikely)
             raise WeatherError("Weather cache expired during request; please retry")
         out[p] = records
@@ -225,7 +233,9 @@ def nearest_record(
 
 
 def weather_at(
-    points_with_etas: list[tuple[float, float, datetime]], hours_ahead: int = 48
+    points_with_etas: list[tuple[float, float, datetime]],
+    hours_ahead: int = 48,
+    precision: int = WEATHER_PRECISION_DEFAULT,
 ) -> list[WeatherAtEta]:
     """For each ``(lat, lng, eta)`` return the forecast for the hour nearest eta.
 
@@ -235,7 +245,9 @@ def weather_at(
     for _, _, eta in points_with_etas:
         if eta.tzinfo is None:
             raise ValueError("eta must be timezone-aware")
-    hourly = get_hourly_weather([(lat, lng) for lat, lng, _ in points_with_etas], hours_ahead)
+    hourly = get_hourly_weather(
+        [(lat, lng) for lat, lng, _ in points_with_etas], hours_ahead, precision
+    )
     out: list[WeatherAtEta] = []
     for lat, lng, eta in points_with_etas:
         rec, beyond = nearest_record(hourly[(lat, lng)], eta)

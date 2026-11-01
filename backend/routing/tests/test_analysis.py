@@ -120,3 +120,42 @@ def test_routing_warnings_passed_through(fixture_json):
     assert len(out["routes"]) == 1
     assert any("distinct route" in w for w in out["warnings"])
     assert out["recommendation"]["route_id"] == "route-1"
+
+
+def test_analyze_uses_precision_2_and_heatmap_uses_precision_1(monkeypatch):
+    from routing.services import heatmap, routing_client
+    from routing.services.routing_client import RouteOption, RoutesResult
+
+    seen = {}
+
+    def fake_weather_at(queries, hours_ahead=48, precision=None):
+        seen["analyze"] = precision
+        return [weather_client.WeatherAtEta(DEPARTURE, 5.0, 0.0, 0.0, False) for _ in queries]
+
+    def fake_hourly(points, hours_ahead=48, precision=None):
+        seen["heatmap"] = precision
+        return {p: [weather_client.HourlyRecord(DEPARTURE, 5.0, 0.0, 0.0)] for p in points}
+
+    coords = [(-100.0, 40.0 + i * 0.1) for i in range(16)]
+    monkeypatch.setattr(
+        routing_client, "get_routes",
+        lambda o, d: RoutesResult([RouteOption("route-1", "Fastest", 103.0, 6000.0, coords)]),
+    )
+    monkeypatch.setattr(weather_client, "weather_at", fake_weather_at)
+    monkeypatch.setattr(weather_client, "get_hourly_weather", fake_hourly)
+
+    analysis.analyze_trip(ORIGIN, DEST, DEPARTURE, 1000, 25)
+    heatmap.build_heatmap(coords, 1000, 30, 25, now=DEPARTURE)
+    assert seen == {"analyze": 2, "heatmap": 1}
+
+
+@respx.mock
+def test_analyze_requests_two_decimal_coordinates(fixture_json):
+    respx.post(DIRECTIONS).mock(
+        return_value=httpx.Response(200, json=fixture_json("ors_directions_1route.json"))
+    )
+    route = mock_weather(lambda lat, lng: 10.0)
+    analysis.analyze_trip(ORIGIN, DEST, DEPARTURE, 1000, 10)
+    lats = [x for c in route.calls for x in c.request.url.params["latitude"].split(",")]
+    assert lats and all(len(x.split(".")[1]) <= 2 for x in lats)
+    assert any(len(x.split(".")[1]) == 2 for x in lats)  # finer than 0.1 degree
