@@ -8,7 +8,7 @@ interface Props {
   children: ReactNode
 }
 
-const PEEK_PX = 132
+export const PEEK_PX = 132
 
 function heights(): Record<Snap, number> {
   const h = window.innerHeight
@@ -79,7 +79,7 @@ export default function BottomSheet({ snap, onSnapChange, children }: Props) {
 
   return (
     <div
-      className="fixed inset-x-0 bottom-0 z-30 flex flex-col rounded-t-[20px] border border-b-0 border-line bg-surface shadow-panel"
+      className="float-card fixed inset-x-0 bottom-0 z-30 flex flex-col rounded-t-[20px] border-b-0"
       style={{ height, transition: dragging ? 'none' : 'height 220ms ease' }}
       role="region"
       aria-label="Trip panel"
@@ -98,11 +98,11 @@ export default function BottomSheet({ snap, onSnapChange, children }: Props) {
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         onKeyDown={onKeyDown}
-        className="flex h-11 shrink-0 cursor-grab touch-none items-center justify-center rounded-t-[20px] focus-visible:outline-offset-[-4px] active:cursor-grabbing"
+        className="flex h-7 shrink-0 cursor-grab touch-none items-center justify-center rounded-t-[20px] focus-visible:outline-offset-[-4px] active:cursor-grabbing"
       >
-        <span aria-hidden="true" className="h-1.5 w-10 rounded-badge bg-line" />
+        <span aria-hidden="true" className="h-1 w-9 rounded-badge bg-muted/40" />
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6">{children}</div>
+      <div data-scroll-area className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 pt-1">{children}</div>
     </div>
   )
 }

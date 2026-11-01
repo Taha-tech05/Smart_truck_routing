@@ -149,7 +149,7 @@ export function buildMockAnalysis(): AnalyzeResponse {
   return {
     routes: routes.sort((a, b) => a.rank - b.rank),
     recommendation: { route_id: win.id, explanation, all_unsafe: false },
-    warnings: ['Alternative routes are not available for this trip length.'],
+    warnings: ['Fewer alternatives found for this trip.'],
   }
 }
 

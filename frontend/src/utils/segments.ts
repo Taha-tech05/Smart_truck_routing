@@ -41,6 +41,7 @@ export function checkpointPoints(route: RouteResult): FeatureCollection<Point> {
     type: 'FeatureCollection',
     features: route.checkpoints.map((c: Checkpoint) => ({
       type: 'Feature',
+      id: c.index,
       properties: { level: c.risk.level, index: c.index, routeId: route.id },
       geometry: { type: 'Point', coordinates: [c.lng, c.lat] },
     })),

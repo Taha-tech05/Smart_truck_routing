@@ -54,12 +54,50 @@ body {
   outline-offset: 2px;
 }
 
-/* ---- Range slider ---- */
+/* ---- Floating cards: 1px border + one soft shadow (dark: inner ring instead of heavy shadow) ---- */
+:root {
+  --panel-w: 360px;
+}
+@media (min-width: 1024px) {
+  :root {
+    --panel-w: 400px;
+  }
+}
+.float-card {
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow), var(--inner-ring);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+/* ---- Thin scrollbar, visible only on hover ---- */
+.scroll-thin {
+  scrollbar-gutter: stable;
+}
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  background: transparent;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+.scroll-thin:hover::-webkit-scrollbar-thumb {
+  background: var(--border);
+}
+
+/* ---- Range slider: 6px track filled up to --pct, 18px thumb with ring ---- */
 input[type="range"].slider {
   -webkit-appearance: none;
   appearance: none;
+  display: block;
   width: 100%;
-  height: 44px;
+  height: 24px;
+  margin: 0;
   background: transparent;
   cursor: pointer;
 }
@@ -70,32 +108,50 @@ input[type="range"].slider:disabled {
 input[type="range"].slider::-webkit-slider-runnable-track {
   height: 6px;
   border-radius: 999px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
+  background: linear-gradient(to right, var(--primary) var(--pct, 0%), var(--surface-2) var(--pct, 0%));
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 input[type="range"].slider::-moz-range-track {
   height: 6px;
   border-radius: 999px;
   background: var(--surface-2);
-  border: 1px solid var(--border);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+input[type="range"].slider::-moz-range-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--primary);
 }
 input[type="range"].slider::-webkit-slider-thumb {
   -webkit-appearance: none;
-  height: 22px;
-  width: 22px;
-  margin-top: -9px;
+  height: 18px;
+  width: 18px;
+  margin-top: -6px;
   border-radius: 999px;
   background: var(--primary);
-  border: 3px solid var(--surface);
-  box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+  border: 0;
+  box-shadow: 0 0 0 3px var(--surface), 0 1px 4px 3px rgb(0 0 0 / 0.18);
 }
 input[type="range"].slider::-moz-range-thumb {
-  height: 16px;
-  width: 16px;
+  height: 18px;
+  width: 18px;
   border-radius: 999px;
   background: var(--primary);
-  border: 3px solid var(--surface);
-  box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+  border: 0;
+  box-shadow: 0 0 0 3px var(--surface), 0 1px 4px 3px rgb(0 0 0 / 0.18);
+}
+
+/* ---- Map controls: attribution compact, bottom-right, 16px from the edges ---- */
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl {
+  margin: 0 16px 16px 0;
+}
+.maplibregl-ctrl-attrib.maplibregl-compact {
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  color: var(--muted);
+}
+.maplibregl-ctrl-attrib a {
+  color: var(--muted);
 }
 
 /* ---- MapLibre popup themed with tokens ---- */
@@ -133,10 +189,19 @@ input[type="range"].slider::-moz-range-thumb {
   font-family: var(--font-sans);
   font-size: 12px;
 }
+.maplibregl-popup-content {
+  border: 1px solid var(--border);
+}
+body {
+  font-variant-numeric: tabular-nums;
+}
 
 @media (prefers-reduced-motion: reduce) {
   * {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
   }
+}
+.maplibregl-ctrl-top-left .maplibregl-ctrl {
+  margin: 16px 0 0 16px;
 }
