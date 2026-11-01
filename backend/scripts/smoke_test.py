@@ -17,6 +17,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import httpx
+
 BACKEND = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND))
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
@@ -40,11 +42,16 @@ PLACES = {
     "Fort Worth": {"lat": 32.7555, "lng": -97.3308, "label": "Fort Worth, TX"},
     "Austin": {"lat": 30.2672, "lng": -97.7431, "label": "Austin, TX"},
     "Houston": {"lat": 29.7604, "lng": -95.3698, "label": "Houston, TX"},
+    "Salt Lake City": {"lat": 40.7608, "lng": -111.8910, "label": "Salt Lake City, UT"},
+    "Minneapolis": {"lat": 44.9778, "lng": -93.2650, "label": "Minneapolis, MN"},
+    "Chicago": {"lat": 41.8781, "lng": -87.6298, "label": "Chicago, IL"},
 }
 TRIPS = [
     ("dallas_denver", "Dallas", "Denver"),
     ("dallas_fortworth", "Dallas", "Fort Worth"),
     ("austin_houston", "Austin", "Houston"),
+    ("denver_saltlake", "Denver", "Salt Lake City"),
+    ("minneapolis_chicago", "Minneapolis", "Chicago"),
 ]
 
 timings: dict[str, float] = {}
@@ -97,6 +104,62 @@ def check(result: dict, elapsed: float) -> list[str]:
     return problems
 
 
+def verify_weather(result: dict) -> bool:
+    """Compare our parsed values for the windiest checkpoint with raw Open-Meteo.
+
+    The raw call is independent of weather_client: its own httpx request in the
+    API's NATIVE units (km/h, mm, cm), converted here, with the hour located by
+    matching the time string. It uses the same rounded (0.1 degree) coordinates
+    the client requests, so the comparison isolates parsing, units, hour index
+    and rain-vs-precipitation. Values at the exact checkpoint lat/lng are shown
+    for information (they can differ slightly because of that rounding).
+    """
+    best = None
+    for r in result["routes"]:
+        for c in r["checkpoints"]:
+            if not c["beyond_forecast"] and (best is None or c["weather"]["wind_mph"] > best[1]["weather"]["wind_mph"]):
+                best = (r["id"], c)
+    if best is None:
+        print("Weather verification: no in-forecast checkpoint to verify")
+        return True
+    route_id, c = best
+    eta = datetime.fromisoformat(c["eta"]).astimezone(timezone.utc)
+    hour = (eta + timedelta(minutes=30)).replace(minute=0, second=0, microsecond=0)
+    hour_key = hour.strftime("%Y-%m-%dT%H:%M")
+
+    def raw(lat: float, lng: float) -> dict:
+        resp = httpx.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={"latitude": lat, "longitude": lng, "timezone": "UTC", "forecast_days": 3,
+                    "hourly": "wind_speed_10m,rain,snowfall,precipitation"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        h = resp.json()["hourly"]
+        i = h["time"].index(hour_key)
+        return {
+            "wind_mph": h["wind_speed_10m"][i] / 1.609344,   # km/h -> mph
+            "rain_in_hr": h["rain"][i] / 25.4,               # mm -> in
+            "snow_in_hr": h["snowfall"][i] / 2.54,           # cm -> in
+            "precip_in_hr": h["precipitation"][i] / 25.4,
+        }
+
+    mine = c["weather"]
+    rounded = raw(round(c["lat"], 1), round(c["lng"], 1))
+    exact = raw(c["lat"], c["lng"])
+    keys = ("wind_mph", "rain_in_hr", "snow_in_hr")
+    match = all(abs(mine[k] - rounded[k]) < 0.01 for k in keys)
+    print(f"Weather verification: {route_id} mile {c['mile']} at ({c['lat']:.3f}, {c['lng']:.3f}), "
+          f"ETA {eta:%H:%M}Z -> hour used {hour_key}Z")
+    print(f"    ours            wind {mine['wind_mph']:.3f}  rain {mine['rain_in_hr']:.4f}  snow {mine['snow_in_hr']:.4f}")
+    print(f"    raw (rounded)   wind {rounded['wind_mph']:.3f}  rain {rounded['rain_in_hr']:.4f}  "
+          f"snow {rounded['snow_in_hr']:.4f}  (precipitation {rounded['precip_in_hr']:.4f})")
+    print(f"    raw (exact pt)  wind {exact['wind_mph']:.3f}  rain {exact['rain_in_hr']:.4f}  "
+          f"snow {exact['snow_in_hr']:.4f}  [info only]")
+    print(f"    {'MATCH' if match else 'MISMATCH'}")
+    return match
+
+
 def run_trip(slug: str, origin_name: str, dest_name: str, departure: datetime) -> bool:
     print("=" * 78)
     print(f"{origin_name} -> {dest_name}   (load {LOAD_LB:,} lb, every {INTERVAL} mi, "
@@ -126,6 +189,10 @@ def run_trip(slug: str, origin_name: str, dest_name: str, departure: datetime) -
         print(f"    severe={s['severe_miles']:.1f} mi  high={s['high_miles']:.1f} mi  "
               f"no_travel={s['no_travel_miles']:.1f} mi  avg_risk={s['avg_risk']:.2f}  "
               f"worst={s['worst_level_name']}")
+        cps = r["checkpoints"]
+        print(f"    max wind={max(c['weather']['wind_mph'] for c in cps):.1f} mph  "
+              f"max rain={max(c['weather']['rain_in_hr'] for c in cps):.3f} in/hr  "
+              f"max snow={max(c['weather']['snow_in_hr'] for c in cps):.3f} in/hr")
         for c in r["checkpoints"][:3]:
             w = c["weather"]
             print(f"      mile {c['mile']:7.1f}  eta {c['eta']}  wind {w['wind_mph']:5.1f} mph  "
@@ -136,6 +203,11 @@ def run_trip(slug: str, origin_name: str, dest_name: str, departure: datetime) -
     step = "  ".join(f"{k}={v:.2f}s" for k, v in timings.items())
     print(f"Elapsed: {elapsed:.2f}s   [{step}]")
     problems = check(result, elapsed)
+    try:
+        if not verify_weather(result):
+            problems.append("weather MISMATCH vs raw Open-Meteo")
+    except Exception as exc:  # verification itself must not hide the rest of the report
+        problems.append(f"weather verification failed: {type(exc).__name__}: {exc}")
     print("Checks: " + ("OK" if not problems else "PROBLEMS -> " + "; ".join(problems)))
     print(f"JSON: {OUT_DIR / (slug + '.json')}\n")
     return not problems
