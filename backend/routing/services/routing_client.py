@@ -42,6 +42,8 @@ PROFILE = "driving-hgv"
 MAX_ROUTES = 3
 ALTERNATIVE_ROUTES = {"target_count": 3, "share_factor": 0.6, "weight_factor": 1.6}
 VIA_OFFSET_FRACTION = 0.10
+ENDPOINT_SNAP_RADIUS_M = 350  # ORS default snap radius for origin/destination
+VIA_SNAP_RADIUS_M = 5000  # via points are synthetic, so let them snap further
 MAX_VIA_LENGTH_RATIO = 1.5
 DUPLICATE_RADIUS_MILES = 1.0
 DUPLICATE_FRACTION = 0.9
@@ -287,9 +289,16 @@ def _parse_features(data: dict) -> list[tuple[float, float, list[Coord]]]:
 
 
 def _directions(
-    coordinates: list[list[float]], api_key: str | None, alternatives: bool
+    coordinates: list[list[float]],
+    api_key: str | None,
+    alternatives: bool,
+    radiuses: list[int] | None = None,
 ) -> list[tuple[float, float, list[Coord]]]:
     body: dict = {"coordinates": coordinates}
+    if radiuses is not None:
+        if len(radiuses) != len(coordinates):
+            raise ValueError("radiuses needs one entry per waypoint")
+        body["radiuses"] = radiuses
     if alternatives:
         body["alternative_routes"] = ALTERNATIVE_ROUTES
     data = ors_request(
@@ -359,7 +368,12 @@ def get_routes(
         main = candidates[0]
         for n, via in enumerate(via_points(main[2]), start=1):
             try:
-                got = _directions([o, [via[0], via[1]], d], api_key, alternatives=False)
+                got = _directions(
+                    [o, [via[0], via[1]], d],
+                    api_key,
+                    alternatives=False,
+                    radiuses=[ENDPOINT_SNAP_RADIUS_M, VIA_SNAP_RADIUS_M, ENDPOINT_SNAP_RADIUS_M],
+                )
             except (NoRouteFoundError, RoutingRateLimitError, RoutingUpstreamError,
                     RoutingTimeoutError) as exc:
                 warnings.append(f"Could not build alternative route {n}: {exc}")

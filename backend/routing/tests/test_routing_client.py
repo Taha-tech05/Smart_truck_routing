@@ -67,6 +67,11 @@ def test_fallback_via_waypoints_when_only_one_route(fixture_json):
     res = rc.get_routes(ORIGIN, DEST, api_key=KEY)
 
     assert len(calls) == 3
+    # snapping: one radius per waypoint; the synthetic via point may snap up to 5 km
+    assert all("radiuses" not in c for c in calls[:1])
+    for c in calls[1:]:
+        assert c["radiuses"] == [350, 5000, 350]
+        assert len(c["radiuses"]) == len(c["coordinates"]) == 3
     vias = [c["coordinates"][1] for c in calls[1:]]
     assert all("alternative_routes" not in c for c in calls[1:])
     # via points are offset east/west of the straight north-south route
