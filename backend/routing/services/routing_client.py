@@ -1,1 +1,354 @@
-﻿"""HTTP client for OpenRouteService directions."""
+﻿"""OpenRouteService directions client (profile ``driving-hgv``, GeoJSON output).
+
+All HTTP for directions lives here. Coordinates in public APIs are
+``(lat, lng)`` for origin/destination and ``(lng, lat)`` (GeoJSON order) for
+route geometry. Units are converted to miles at this boundary.
+
+ORS alternative routes
+----------------------
+The public ORS API only supports ``alternative_routes`` for routes up to
+roughly 100 km, and long truck trips often return a single route (or a 400
+error for the alternatives request). ``get_routes`` therefore:
+
+1. asks for alternatives (target_count=3, share_factor=0.6, weight_factor=1.6);
+   if ORS rejects that request it retries a plain request;
+2. if fewer than 3 distinct routes came back, builds *via* waypoints at the
+   midpoint of the main route, offset perpendicular to the route direction by
+   ~10% of the route length (once to each side), and requests
+   origin -> via -> destination for each;
+3. de-duplicates (two routes are the same if > 90% of their sampled points lie
+   within 1 mile of the other) and discards via-routes more than 1.5x longer
+   (by distance) than the fastest route.
+
+It never fails just because fewer than 3 routes exist; instead it returns what
+it found plus a ``warnings`` list.
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+
+import httpx
+
+from ..constants import (
+    EARTH_RADIUS_MILES,
+    HTTP_TIMEOUT_S,
+    MILES_PER_METER,
+    ORS_BASE_URL,
+)
+from .checkpoints import Coord, point_at_mile, route_length_miles
+
+PROFILE = "driving-hgv"
+MAX_ROUTES = 3
+ALTERNATIVE_ROUTES = {"target_count": 3, "share_factor": 0.6, "weight_factor": 1.6}
+VIA_OFFSET_FRACTION = 0.10
+MAX_VIA_LENGTH_RATIO = 1.5
+DUPLICATE_RADIUS_MILES = 1.0
+DUPLICATE_FRACTION = 0.9
+SAMPLE_POINTS = 40
+
+
+# ---------------------------------------------------------------- errors
+
+class RoutingError(Exception):
+    """Base class for all ORS routing/geocoding failures."""
+
+
+class RoutingAuthError(RoutingError):
+    """401/403: the ORS API key is missing or invalid."""
+
+
+class RoutingRateLimitError(RoutingError):
+    """429: ORS rate limit or quota exceeded."""
+
+
+class RoutingUpstreamError(RoutingError):
+    """5xx or network failure talking to ORS."""
+
+
+class RoutingTimeoutError(RoutingError):
+    """ORS did not answer within the timeout."""
+
+
+class NoRouteFoundError(RoutingError):
+    """ORS could not find a route (400/404, e.g. unroutable point)."""
+
+
+# ---------------------------------------------------------------- types
+
+@dataclass(frozen=True)
+class RouteOption:
+    id: str
+    summary: str
+    distance_miles: float
+    duration_s: float
+    coordinates: list[Coord]  # (lng, lat)
+
+
+@dataclass
+class RoutesResult:
+    routes: list[RouteOption]
+    warnings: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------- HTTP
+
+def _api_key(api_key: str | None) -> str:
+    if api_key is None:
+        from django.conf import settings
+
+        api_key = getattr(settings, "ORS_API_KEY", "")
+    if not api_key:
+        raise RoutingAuthError("ORS_API_KEY is not configured")
+    return api_key
+
+
+_client: httpx.Client | None = None
+
+
+def _get_client() -> httpx.Client:
+    """Shared client: building an SSL context per request is slow on Windows."""
+    global _client
+    if _client is None:
+        _client = httpx.Client(timeout=HTTP_TIMEOUT_S)
+    return _client
+
+
+def ors_request(
+    method: str,
+    path: str,
+    *,
+    api_key: str | None = None,
+    params: dict | None = None,
+    json: dict | None = None,
+    base_url: str = ORS_BASE_URL,
+) -> dict:
+    """Perform an ORS request and map failures to RoutingError subclasses."""
+    headers = {"Authorization": _api_key(api_key)}
+    try:
+        resp = _get_client().request(
+            method,
+            f"{base_url}{path}",
+            params=params,
+            json=json,
+            headers=headers,
+            timeout=HTTP_TIMEOUT_S,
+        )
+    except httpx.TimeoutException as exc:
+        raise RoutingTimeoutError("OpenRouteService timed out") from exc
+    except httpx.HTTPError as exc:
+        raise RoutingUpstreamError(f"Could not reach OpenRouteService: {exc}") from exc
+
+    status = resp.status_code
+    if status in (401, 403):
+        raise RoutingAuthError("OpenRouteService rejected the API key")
+    if status == 429:
+        raise RoutingRateLimitError("OpenRouteService rate limit exceeded")
+    if status >= 500:
+        raise RoutingUpstreamError(f"OpenRouteService error ({status})")
+    if status >= 400:
+        raise NoRouteFoundError(_error_message(resp) or f"Request rejected ({status})")
+    try:
+        return resp.json()
+    except ValueError as exc:
+        raise RoutingUpstreamError("OpenRouteService returned invalid JSON") from exc
+
+
+def _error_message(resp: httpx.Response) -> str:
+    try:
+        err = resp.json().get("error")
+    except ValueError:
+        return ""
+    if isinstance(err, dict):
+        return str(err.get("message", ""))
+    return str(err or "")
+
+
+# ---------------------------------------------------------------- geometry helpers
+
+def offset_point(
+    lng: float, lat: float, direction: tuple[float, float], miles: float
+) -> Coord:
+    """Move ``miles`` from (lng, lat) along a unit (east, north) ``direction``."""
+    dlat = math.degrees(miles * direction[1] / EARTH_RADIUS_MILES)
+    dlng = math.degrees(
+        miles * direction[0] / (EARTH_RADIUS_MILES * max(math.cos(math.radians(lat)), 1e-6))
+    )
+    return (lng + dlng, lat + dlat)
+
+
+def via_points(coordinates: list[Coord]) -> list[Coord]:
+    """Two via points: route midpoint offset ~10% of length to each side."""
+    length = route_length_miles(coordinates)
+    mid = point_at_mile(coordinates, length / 2)
+    before = point_at_mile(coordinates, length / 2 - max(length * 0.01, 0.01))
+    after = point_at_mile(coordinates, length / 2 + max(length * 0.01, 0.01))
+    # Local direction in (east, north), scaled by latitude.
+    coslat = max(math.cos(math.radians(mid[1])), 1e-6)
+    east = (after[0] - before[0]) * coslat
+    north = after[1] - before[1]
+    norm = math.hypot(east, north) or 1.0
+    east, north = east / norm, north / norm
+    perp = (-north, east)
+    off = length * VIA_OFFSET_FRACTION
+    return [
+        offset_point(mid[0], mid[1], perp, off),
+        offset_point(mid[0], mid[1], (-perp[0], -perp[1]), off),
+    ]
+
+
+def _dist_point_to_segment_miles(p: Coord, a: Coord, b: Coord) -> float:
+    """Distance (miles) from p to segment a-b using a local flat projection."""
+    k = math.radians(1) * EARTH_RADIUS_MILES
+    coslat = math.cos(math.radians(p[1]))
+    ax, ay = (a[0] - p[0]) * coslat * k, (a[1] - p[1]) * k
+    bx, by = (b[0] - p[0]) * coslat * k, (b[1] - p[1]) * k
+    dx, dy = bx - ax, by - ay
+    seg2 = dx * dx + dy * dy
+    t = 0.0 if seg2 == 0 else max(0.0, min(1.0, -(ax * dx + ay * dy) / seg2))
+    return math.hypot(ax + t * dx, ay + t * dy)
+
+
+def _distance_to_polyline_miles(p: Coord, line: list[Coord]) -> float:
+    return min(_dist_point_to_segment_miles(p, a, b) for a, b in zip(line, line[1:]))
+
+
+def _sample(coords: list[Coord], n: int = SAMPLE_POINTS) -> list[Coord]:
+    length = route_length_miles(coords)
+    if length == 0:
+        return [coords[0]]
+    return [point_at_mile(coords, length * i / (n - 1)) for i in range(n)]
+
+
+def _fraction_near(a: list[Coord], b: list[Coord]) -> float:
+    """Fraction of sampled points of ``a`` within 1 mile of polyline ``b``."""
+    pts = _sample(a)
+    near = sum(1 for p in pts if _distance_to_polyline_miles(p, b) <= DUPLICATE_RADIUS_MILES)
+    return near / len(pts)
+
+
+def is_duplicate(a: list[Coord], b: list[Coord]) -> bool:
+    """True if >90% of each route's sampled points lie within 1 mile of the other."""
+    return _fraction_near(a, b) > DUPLICATE_FRACTION and _fraction_near(b, a) > DUPLICATE_FRACTION
+
+
+# ---------------------------------------------------------------- parsing
+
+def _parse_features(data: dict) -> list[tuple[float, float, list[Coord]]]:
+    """Return ``[(distance_miles, duration_s, coords), ...]`` from an ORS GeoJSON response."""
+    out = []
+    for feat in data.get("features", []):
+        summary = feat.get("properties", {}).get("summary", {})
+        coords = [(float(c[0]), float(c[1])) for c in feat.get("geometry", {}).get("coordinates", [])]
+        if len(coords) < 2:
+            continue
+        out.append(
+            (
+                float(summary.get("distance", 0)) * MILES_PER_METER,
+                float(summary.get("duration", 0)),
+                coords,
+            )
+        )
+    return out
+
+
+def _directions(
+    coordinates: list[list[float]], api_key: str | None, alternatives: bool
+) -> list[tuple[float, float, list[Coord]]]:
+    body: dict = {"coordinates": coordinates}
+    if alternatives:
+        body["alternative_routes"] = ALTERNATIVE_ROUTES
+    data = ors_request(
+        "POST", f"/v2/directions/{PROFILE}/geojson", api_key=api_key, json=body
+    )
+    return _parse_features(data)
+
+
+def _fmt_duration(seconds: float) -> str:
+    minutes = round(seconds / 60)
+    h, m = divmod(abs(minutes), 60)
+    return f"{h} h {m} min" if h else f"{m} min"
+
+
+def _label(i: int, base: tuple[float, float, list[Coord]], cur: tuple[float, float, list[Coord]]) -> str:
+    if i == 0:
+        return "Fastest"
+    extra_min = round((cur[1] - base[1]) / 60)
+    sign = "+" if extra_min >= 0 else "-"
+    return f"Alternative {i} ({sign}{_fmt_duration(abs(cur[1] - base[1]))}, {cur[0]:.0f} mi)"
+
+
+# ---------------------------------------------------------------- public API
+
+def get_routes(
+    origin: tuple[float, float],
+    destination: tuple[float, float],
+    api_key: str | None = None,
+) -> RoutesResult:
+    """Return up to 3 distinct truck routes from ``origin`` to ``destination``.
+
+    ``origin`` / ``destination`` are ``(lat, lng)``. Raises a RoutingError
+    subclass if the main request fails; failures of the extra via-route
+    requests only produce warnings.
+    """
+    warnings: list[str] = []
+    o = [origin[1], origin[0]]
+    d = [destination[1], destination[0]]
+
+    try:
+        found = _directions([o, d], api_key, alternatives=True)
+    except NoRouteFoundError:
+        # e.g. route too long for the alternatives algorithm: retry plain.
+        found = _directions([o, d], api_key, alternatives=False)
+        warnings.append("Alternative routes are not available for this trip length.")
+    if not found:
+        raise NoRouteFoundError("No route found between the given points")
+
+    candidates: list[tuple[float, float, list[Coord]]] = []
+    via_candidates: list[tuple[float, float, list[Coord]]] = []
+
+    def distinct(items: list[tuple[float, float, list[Coord]]]) -> list:
+        kept: list = []
+        for item in sorted(items, key=lambda r: r[1]):
+            if not any(is_duplicate(item[2], k[2]) for k in kept):
+                kept.append(item)
+        return kept
+
+    candidates = distinct(found)
+
+    if len(candidates) < MAX_ROUTES:
+        main = candidates[0]
+        for n, via in enumerate(via_points(main[2]), start=1):
+            try:
+                got = _directions([o, [via[0], via[1]], d], api_key, alternatives=False)
+            except (NoRouteFoundError, RoutingRateLimitError, RoutingUpstreamError,
+                    RoutingTimeoutError) as exc:
+                warnings.append(f"Could not build alternative route {n}: {exc}")
+                continue
+            via_candidates.extend(got[:1])
+
+        fastest_distance = min(c[0] for c in candidates)
+        for v in via_candidates:
+            if v[0] > MAX_VIA_LENGTH_RATIO * fastest_distance:
+                warnings.append("Discarded an alternative route that was much longer than the fastest.")
+                continue
+            candidates = distinct(candidates + [v])
+
+    candidates = sorted(candidates, key=lambda r: r[1])[:MAX_ROUTES]
+    if len(candidates) < MAX_ROUTES:
+        warnings.append(
+            f"Only {len(candidates)} distinct route{'s' if len(candidates) != 1 else ''} found."
+        )
+
+    base = candidates[0]
+    routes = [
+        RouteOption(
+            id=f"route-{i + 1}",
+            summary=_label(i, base, c),
+            distance_miles=c[0],
+            duration_s=c[1],
+            coordinates=c[2],
+        )
+        for i, c in enumerate(candidates)
+    ]
+    return RoutesResult(routes=routes, warnings=warnings)

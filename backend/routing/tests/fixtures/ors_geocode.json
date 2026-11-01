@@ -1,0 +1,1 @@
+{"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"label": "Omaha, NE, USA"}, "geometry": {"type": "Point", "coordinates": [-95.93, 41.26]}}, {"type": "Feature", "properties": {"label": "Omaha, TX, USA"}, "geometry": {"type": "Point", "coordinates": [-94.74, 33.18]}}]}
