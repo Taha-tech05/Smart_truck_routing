@@ -23,3 +23,6 @@ dist/
 Thumbs.db
 .idea/
 .vscode/
+
+# Smoke-test output
+backend/scripts/out/
