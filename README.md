@@ -15,6 +15,7 @@ Requires Python 3.11+.
 cd backend
 python -m venv venv
 # Windows (PowerShell):  .\venv\Scripts\Activate.ps1
+# Windows (Git Bash):    source venv/Scripts/activate
 # macOS/Linux:           source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env        # then edit values (set ORS_API_KEY)

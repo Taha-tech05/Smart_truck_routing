@@ -16,9 +16,13 @@ export default function Map() {
       zoom: 4,
     })
     map.addControl(new NavigationControl(), 'top-right')
+    map.on('error', (e) => console.error('[map]', e.error ?? e))
+    map.on('load', () => console.log('[map] loaded'))
     return () => map.remove()
   }, [])
 
-  return <div ref={containerRef} className="absolute inset-0" />
+  // Inline size: maplibre-gl.css sets `.maplibregl-map { position: relative }`, which
+  // beats Tailwind (layered) utilities and would collapse an `absolute inset-0` container.
+  return <div ref={containerRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />
 }
 
