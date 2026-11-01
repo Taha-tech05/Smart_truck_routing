@@ -1,0 +1,25 @@
+﻿# Dependencies / environments
+node_modules/
+venv/
+.venv/
+
+# Secrets (only .env.example files are committed)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+db.sqlite3
+staticfiles/
+
+# Build output
+dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
