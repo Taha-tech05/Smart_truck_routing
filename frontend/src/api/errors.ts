@@ -33,6 +33,14 @@ export function normalizeError(e: unknown): AppError {
       }
     const body = res.data?.error as { code?: string; message?: string } | undefined
     const retryable = RETRYABLE_STATUS.has(res.status)
+    if (body?.code === 'routing_auth_failed')
+      return {
+        code: 'routing_auth_failed',
+        message:
+          'The routing service is not available right now (its API key was rejected or its daily quota is used up). Try again later.',
+        retryable: false,
+        userFacing: true,
+      }
     if (body?.code === 'no_route')
       return {
         code: 'no_route',

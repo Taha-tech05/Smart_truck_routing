@@ -167,8 +167,13 @@ function tuneBasemap(map: MapLibreMap, theme: Theme) {
       } else if (dark) {
         const p = darkPaint[id]
         if (p) map.setPaintProperty(id, p[0] as never, p[1] as never)
-        else if (layer.type === 'line' && /^(road|bridge|tunnel)_.*_fill/.test(id)) map.setPaintProperty(id, 'line-color', '#5b7092')
-        else if (layer.type === 'line' && /^(road|bridge|tunnel)_.*_case/.test(id)) map.setPaintProperty(id, 'line-color', '#2c3d56')
+        else if (layer.type === 'line' && /^(road|bridge|tunnel)_.*_fill/.test(id)) map.setPaintProperty(id, 'line-color', '#7a90b3')
+        else if (layer.type === 'line' && /^(road|bridge|tunnel)_(mot|trunk|pri)_case/.test(id)) {
+          // Dark Matter draws major highways ONLY as these outlines until zoom 10: keep them visible
+          map.setPaintProperty(id, 'line-color', '#667ca0')
+          map.setPaintProperty(id, 'line-opacity', 1)
+          map.setPaintProperty(id, 'line-width', ['interpolate', ['linear'], ['zoom'], 5, 0.9, 8, 1.6, 10, 2.4, 13, 5] as never)
+        } else if (layer.type === 'line' && /^(road|bridge|tunnel)_.*_case/.test(id)) map.setPaintProperty(id, 'line-color', '#2c3d56')
       }
     } catch {
       /* layer without that property: ignore */
