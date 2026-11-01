@@ -13,3 +13,13 @@ ORS_BASE_URL = "https://api.openrouteservice.org"
 OPEN_METEO_BASE_URL = "https://api.open-meteo.com/v1/forecast"
 
 MAX_LOAD_LB = 120_000
+
+# Heatmap (corridor risk grid)
+HEATMAP_HOURS = 48                 # hour 0 .. hour 48 -> 49 slots
+MAX_GRID_POINTS = 150
+DEFAULT_CORRIDOR_MILES = 30
+MIN_CORRIDOR_MILES = 10
+MAX_CORRIDOR_MILES = 60
+GRID_DEDUPE_MILES = 7              # weather cache cells are 0.1 degrees (~7 mi)
+MAX_ROUTE_VERTICES = 5000          # longer geometries are simplified server-side
+MAX_REQUEST_VERTICES = 50_000      # hard request limit (abuse guard)

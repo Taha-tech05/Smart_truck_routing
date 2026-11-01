@@ -36,7 +36,13 @@ from ..constants import (
     MILES_PER_METER,
     ORS_BASE_URL,
 )
-from .checkpoints import Coord, cumulative_miles, interpolate_at, point_at_mile, route_length_miles
+from .checkpoints import (
+    Coord,
+    cumulative_miles,
+    interpolate_at,
+    local_direction,
+    offset_point,
+)
 
 PROFILE = "driving-hgv"
 MAX_ROUTES = 3
@@ -168,29 +174,12 @@ def _error_message(resp: httpx.Response) -> str:
 
 # ---------------------------------------------------------------- geometry helpers
 
-def offset_point(
-    lng: float, lat: float, direction: tuple[float, float], miles: float
-) -> Coord:
-    """Move ``miles`` from (lng, lat) along a unit (east, north) ``direction``."""
-    dlat = math.degrees(miles * direction[1] / EARTH_RADIUS_MILES)
-    dlng = math.degrees(
-        miles * direction[0] / (EARTH_RADIUS_MILES * max(math.cos(math.radians(lat)), 1e-6))
-    )
-    return (lng + dlng, lat + dlat)
-
-
 def via_points(coordinates: list[Coord]) -> list[Coord]:
     """Two via points: route midpoint offset ~10% of length to each side."""
-    length = route_length_miles(coordinates)
-    mid = point_at_mile(coordinates, length / 2)
-    before = point_at_mile(coordinates, length / 2 - max(length * 0.01, 0.01))
-    after = point_at_mile(coordinates, length / 2 + max(length * 0.01, 0.01))
-    # Local direction in (east, north), scaled by latitude.
-    coslat = max(math.cos(math.radians(mid[1])), 1e-6)
-    east = (after[0] - before[0]) * coslat
-    north = after[1] - before[1]
-    norm = math.hypot(east, north) or 1.0
-    east, north = east / norm, north / norm
+    cum = cumulative_miles(coordinates)
+    length = cum[-1]
+    mid = interpolate_at(coordinates, cum, length / 2)
+    east, north = local_direction(coordinates, cum, length / 2)
     perp = (-north, east)
     off = length * VIA_OFFSET_FRACTION
     return [

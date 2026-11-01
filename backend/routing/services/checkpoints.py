@@ -90,6 +90,29 @@ def point_at_mile(coordinates: list[Coord], mile: float) -> Coord:
     return interpolate_at(coordinates, cumulative_miles(coordinates), mile)
 
 
+def local_direction(
+    coordinates: list[Coord], cum: list[float], mile: float, span_miles: float = 1.0
+) -> tuple[float, float]:
+    """Unit ``(east, north)`` direction of the route around ``mile``."""
+    half = max(min(span_miles, cum[-1] / 4), 1e-6)
+    before = interpolate_at(coordinates, cum, mile - half)
+    after = interpolate_at(coordinates, cum, mile + half)
+    mid_lat = (before[1] + after[1]) / 2
+    east = (after[0] - before[0]) * max(math.cos(math.radians(mid_lat)), 1e-6)
+    north = after[1] - before[1]
+    norm = math.hypot(east, north) or 1.0
+    return east / norm, north / norm
+
+
+def offset_point(lng: float, lat: float, direction: tuple[float, float], miles: float) -> Coord:
+    """Move ``miles`` from (lng, lat) along a unit (east, north) ``direction``."""
+    dlat = math.degrees(miles * direction[1] / EARTH_RADIUS_MILES)
+    dlng = math.degrees(
+        miles * direction[0] / (EARTH_RADIUS_MILES * max(math.cos(math.radians(lat)), 1e-6))
+    )
+    return (lng + dlng, lat + dlat)
+
+
 def sample_checkpoints(
     coordinates: list[Coord],
     total_duration_s: float,

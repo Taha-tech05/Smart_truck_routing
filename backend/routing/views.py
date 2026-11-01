@@ -1,10 +1,12 @@
 """Routing app views."""
 from rest_framework.decorators import api_view
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
-from .serializers import AnalyzeRequestSerializer
+from .serializers import AnalyzeRequestSerializer, HeatmapRequestSerializer
 from .services import geocoding
 from .services.analysis import analyze_trip
+from .services.heatmap import build_heatmap
 
 
 @api_view(["GET"])
@@ -32,4 +34,22 @@ def analyze_view(request):
         load_lb=v["load_weight_lb"],
         interval_miles=v["interval_miles"],
     )
+    return Response(result)
+
+
+@api_view(["POST"])
+def heatmap_view(request):
+    """POST /api/heatmap -> 49 hours of risk levels for a grid around a route."""
+    ser = HeatmapRequestSerializer(data=request.data)
+    ser.is_valid(raise_exception=True)
+    v = ser.validated_data
+    try:
+        result = build_heatmap(
+            coords=v["route_coordinates"],
+            load_lb=v["load_weight_lb"],
+            corridor_miles=v["corridor_miles"],
+            spacing_miles=v["spacing_miles"],
+        )
+    except ValueError as exc:  # e.g. zero-length route
+        raise ValidationError({"route_coordinates": [str(exc)]}) from exc
     return Response(result)

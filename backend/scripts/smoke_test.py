@@ -30,6 +30,7 @@ django.setup()  # also loads backend/.env via config.settings
 from django.conf import settings  # noqa: E402
 
 from routing.services import analysis, routing_client, weather_client  # noqa: E402
+from routing.services.heatmap import build_heatmap  # noqa: E402
 
 OUT_DIR = Path(__file__).resolve().parent / "out"
 LOAD_LB = 40_000
@@ -55,6 +56,7 @@ TRIPS = [
 ]
 
 timings: dict[str, float] = {}
+RESULTS: dict[str, dict] = {}
 
 
 def timed(module, name: str):
@@ -179,6 +181,7 @@ def run_trip(slug: str, origin_name: str, dest_name: str, departure: datetime) -
         return False
     elapsed = time.perf_counter() - start
 
+    RESULTS[slug] = result
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUT_DIR / f"{slug}.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
 
@@ -215,6 +218,37 @@ def run_trip(slug: str, origin_name: str, dest_name: str, departure: datetime) -
     return not problems
 
 
+def heatmap_timing() -> bool:
+    """Time build_heatmap (cold, then warm) for the recommended Dallas -> Denver route."""
+    result = RESULTS.get("dallas_denver")
+    if not result:
+        print("Heatmap timing skipped: no Dallas -> Denver result")
+        return False
+    route = next(r for r in result["routes"] if r["recommended"])
+    coords = [tuple(c) for c in route["geometry"]["coordinates"]]
+    print("=" * 78)
+    print(f"Heatmap for recommended Dallas -> Denver route ({route['id']}, "
+          f"{route['distance_miles']:.0f} mi, {len(coords)} vertices)")
+    print("=" * 78)
+    weather_client.clear_cache()
+    ok = True
+    for label, target in (("cold", 8.0), ("warm", 1.0)):
+        start = time.perf_counter()
+        hm = build_heatmap(coords, LOAD_LB, 30, 25)
+        elapsed = time.perf_counter() - start
+        size_kb = len(json.dumps(hm)) / 1024
+        good = elapsed < target
+        ok &= good
+        print(f"Heatmap {label}: points={len(hm['points'])}  elapsed={elapsed:.2f}s "
+              f"(target < {target:g}s: {'OK' if good else 'SLOW'})  size={size_kb:.1f} KB  "
+              f"missing={hm['missing']}  warnings={hm['warnings'] or 'none'}")
+    (OUT_DIR / "dallas_denver_heatmap.json").write_text(json.dumps(hm), encoding="utf-8")
+    worst = [row["max_level"] for row in hm["summary"]]
+    print(f"Max level by hour 0/12/24/36/48: {[worst[h] for h in (0, 12, 24, 36, 48)]}")
+    print()
+    return ok
+
+
 def main() -> int:
     if not settings.ORS_API_KEY:
         print("ORS_API_KEY is empty. Add it to backend/.env and re-run.")
@@ -224,6 +258,7 @@ def main() -> int:
     timed(routing_client, "ors_request")
     departure = (datetime.now(timezone.utc) + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
     ok = [run_trip(slug, o, d, departure) for slug, o, d in TRIPS]
+    ok.append(heatmap_timing())
     return 0 if all(ok) else 1
 
 

@@ -7,7 +7,15 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import serializers
 
-from .constants import ALLOWED_INTERVALS, DEFAULT_INTERVAL_MILES, MAX_LOAD_LB
+from .constants import (
+    ALLOWED_INTERVALS,
+    DEFAULT_CORRIDOR_MILES,
+    DEFAULT_INTERVAL_MILES,
+    MAX_CORRIDOR_MILES,
+    MAX_LOAD_LB,
+    MAX_REQUEST_VERTICES,
+    MIN_CORRIDOR_MILES,
+)
 
 MAX_PAST = timedelta(hours=1)
 MAX_FUTURE = timedelta(days=7)
@@ -73,3 +81,43 @@ class AnalyzeRequestSerializer(serializers.Serializer):
         if round(o["lat"], 4) == round(d["lat"], 4) and round(o["lng"], 4) == round(d["lng"], 4):
             raise serializers.ValidationError("Origin and destination must be different places.")
         return attrs
+
+
+class HeatmapRequestSerializer(serializers.Serializer):
+    """Body of POST /api/heatmap."""
+
+    route_coordinates = serializers.JSONField()
+    load_weight_lb = serializers.FloatField(min_value=0, max_value=MAX_LOAD_LB)
+    corridor_miles = serializers.FloatField(
+        required=False, default=DEFAULT_CORRIDOR_MILES,
+        min_value=MIN_CORRIDOR_MILES, max_value=MAX_CORRIDOR_MILES,
+    )
+    spacing_miles = serializers.IntegerField(required=False, default=DEFAULT_INTERVAL_MILES)
+
+    def validate_route_coordinates(self, value):
+        if not isinstance(value, list):
+            raise serializers.ValidationError("route_coordinates must be a list of [lng, lat] pairs.")
+        if len(value) < 2:
+            raise serializers.ValidationError("At least 2 coordinates are required.")
+        if len(value) > MAX_REQUEST_VERTICES:
+            raise serializers.ValidationError(
+                f"At most {MAX_REQUEST_VERTICES} coordinates are accepted."
+            )
+        out = []
+        for i, pair in enumerate(value):
+            if (
+                not isinstance(pair, (list, tuple))
+                or len(pair) != 2
+                or any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in pair)
+            ):
+                raise serializers.ValidationError(f"Coordinate {i} must be a [lng, lat] pair of numbers.")
+            lng, lat = float(pair[0]), float(pair[1])
+            if not (-180 <= lng <= 180) or not (-90 <= lat <= 90):  # also rejects NaN
+                raise serializers.ValidationError(f"Coordinate {i} is out of range (lng -180..180, lat -90..90).")
+            out.append((lng, lat))
+        return out
+
+    def validate_spacing_miles(self, value):
+        if value not in ALLOWED_INTERVALS:
+            raise serializers.ValidationError(f"spacing_miles must be one of {list(ALLOWED_INTERVALS)}")
+        return value

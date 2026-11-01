@@ -98,6 +98,27 @@ It returns 1-3 routes plus a `warnings` list and never fails just because fewer 
 ### Assumption: checkpoint interval
 "Every 10/25/50 miles" is treated as a **user-chosen interval** (10, 25 or 50) that defaults to 25.
 
+### Heatmap (`POST /api/heatmap`)
+One response holds 48 hours of risk for a grid around a route, so the frontend time slider changes
+the hour with **no further network calls**.
+- **Corridor grid:** centre-line points every `spacing_miles` (10, 25 or 50) along the route, each with
+  perpendicular offsets at -corridor, -corridor/2, 0, +corridor/2, +corridor miles (`corridor_miles`
+  10-60, default 30), computed from the local route bearing. Points within ~7 miles of each other are
+  merged, because the weather cache uses 0.1 degree cells (~7 miles) and tighter points add nothing.
+- **150-point cap:** if the grid would exceed 150 points the spacing is increased automatically and a
+  warning is returned. Route geometries over 5,000 vertices are simplified server-side.
+- **Hours:** hour 0 is the **current UTC hour** (floored); hour 48 is two days later (49 slots). The slot
+  is found by matching timestamps in the Open-Meteo arrays, not by assuming they start at the current
+  hour. Missing hours are forward-filled from the previous hour (0 if none) and counted in `missing`.
+- **Weather and cache:** one batched call through the same `weather_client` (chunked, concurrent, 30-minute
+  cache) that `/api/analyze` uses, so overlapping points cost nothing extra.
+- **Digit strings:** each point's 49 levels are sent as one string of characters `0`-`4`
+  (`"0011223..."`) instead of an array of numbers. That is about 50 bytes per point instead of ~150, keeps
+  150 points x 49 hours around 15 KB (limit 100 KB), and the frontend reads the level with `s[hour]`.
+- Request: `{route_coordinates: [[lng, lat], ...], load_weight_lb, corridor_miles?, spacing_miles?}`.
+  Response: `{start_time, hours, points: [[lat, lng, mile_along], ...], levels: [...], level_names,
+  summary: [{hour, max_level, counts}], missing, warnings}`.
+
 ### Forecast limits
 Open-Meteo is queried for 3 forecast days. ETAs past the end of the forecast use the last
 available hour and are flagged `beyond_forecast` (with a warning).
