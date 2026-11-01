@@ -1,30 +1,35 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Pencil, Route as RouteIcon } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import BottomSheet, { type Snap } from './components/BottomSheet'
 import HeatmapSlider from './components/HeatmapSlider'
 import MapView from './components/MapView'
+import { AnalyzeProgress, ErrorCard, SkeletonCards } from './components/ResultsStates'
 import RouteList from './components/RouteList'
 import ThemeToggle from './components/ThemeToggle'
-import TripForm, { DEFAULT_TRIP, type TripValues } from './components/TripForm'
+import TripForm, { buildRequest, defaultTrip, type TripValues } from './components/TripForm'
+import { useAnalyze } from './hooks/useAnalyze'
+import { useHeatmap } from './hooks/useHeatmap'
 import { useIsMobile } from './hooks/useIsMobile'
 import { useTheme } from './hooks/useTheme'
-import { MOCK_START } from './mocks/clock'
-import { MOCK_ANALYSIS } from './mocks/analyze'
-import { MOCK_HEATMAP } from './mocks/heatmap'
-import type { AnalyzeResponse } from './types'
+import type { AnalyzeRequest, AnalyzeResponse } from './types'
 import { formatLb } from './utils/format'
 
-function shortName(place: string): string {
-  return place.split(',')[0]
+const shortName = (place: string) => place.split(',')[0]
+
+function currentHour(): Date {
+  const d = new Date()
+  d.setMinutes(0, 0, 0)
+  return d
 }
 
 export default function App() {
   const { theme, toggle } = useTheme()
   const isMobile = useIsMobile()
 
-  const [trip, setTrip] = useState<TripValues>(DEFAULT_TRIP)
-  const [loading, setLoading] = useState(false)
-  const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null)
+  const [trip, setTrip] = useState<TripValues>(defaultTrip)
+  const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null) // last SUCCESSFUL result
+  const [request, setRequest] = useState<AnalyzeRequest | null>(null) // the request that produced it
+  const [pending, setPending] = useState<AnalyzeRequest | null>(null) // the request in flight / last tried
   const [editing, setEditing] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [fitKey, setFitKey] = useState(0)
@@ -34,71 +39,125 @@ export default function App() {
   const [hour, setHour] = useState(0)
   const [playing, setPlaying] = useState(false)
 
-  // ---- fake "network": analyze resolves with the mock after a short delay ----
-  const timer = useRef<number>(undefined)
-  useEffect(() => () => window.clearTimeout(timer.current), [])
-  const analyze = useCallback(() => {
-    setLoading(true)
-    window.clearTimeout(timer.current)
-    timer.current = window.setTimeout(() => {
-      setAnalysis(MOCK_ANALYSIS)
-      setSelectedId(MOCK_ANALYSIS.recommendation.route_id)
-      setEditing(false)
-      setLoading(false)
-      setFitKey((k) => k + 1)
-      if (window.matchMedia('(max-width: 767px)').matches) setSnap('peek')
-    }, 700)
+  const onSuccess = useCallback((data: AnalyzeResponse, req: AnalyzeRequest) => {
+    setAnalysis(data)
+    setRequest(req)
+    setSelectedId(data.recommendation.route_id ?? data.routes[0]?.id ?? null)
+    setEditing(false)
+    setHour(0)
+    setFitKey((k) => k + 1)
+    if (window.matchMedia('(max-width: 767px)').matches) setSnap('peek')
   }, [])
+  const analyzer = useAnalyze(onSuccess)
 
-  // ---- heatmap playback: advance the hour locally, no network ----
+  const submit = useCallback(
+    (req: AnalyzeRequest) => {
+      setPending(req)
+      setPlaying(false)
+      analyzer.run(req)
+    },
+    [analyzer],
+  )
+
+  // ---- heatmap: ONE request per selected route; the slider only reads from the cached response ----
+  const selected = analysis?.routes.find((r) => r.id === selectedId) ?? null
+  const heat = useHeatmap(selected, request?.load_weight_lb ?? 0, request?.departure_time ?? '', heatOn && !!request)
+  const heatStart = useMemo(() => (heat.data ? new Date(heat.data.start_time) : currentHour()), [heat.data])
+  const maxHour = heat.data ? heat.data.hours - 1 : 48
+
   useEffect(() => {
     if (!playing || !heatOn) return
-    const id = window.setInterval(() => setHour((h) => (h >= 48 ? 0 : h + 1)), 600)
+    const id = window.setInterval(() => setHour((h) => (h >= maxHour ? 0 : h + 1)), 400)
     return () => window.clearInterval(id)
-  }, [playing, heatOn])
+  }, [playing, heatOn, maxHour])
 
-  const heatmap = useMemo(() => ({ enabled: heatOn, data: MOCK_HEATMAP, hour }), [heatOn, hour])
+  const heatmap = useMemo(() => ({ enabled: heatOn, data: heat.data ?? null, hour }), [heatOn, heat.data, hour])
   const onEnabled = useCallback((v: boolean) => {
     setHeatOn(v)
     if (!v) setPlaying(false)
   }, [])
 
-  const showForm = !analysis || editing
+  const loading = analyzer.loading
+  const err = analyzer.error
+  const showForm = (!analysis || editing || !!err) && !loading
 
-  // new content (form <-> results): start from the top of whichever panel scrolls
   useEffect(() => {
     document.querySelectorAll('[data-scroll-area]').forEach((el) => el.scrollTo({ top: 0 }))
-  }, [showForm])
+  }, [showForm, loading])
 
-  const panelBody = (
-    <div className="flex flex-col gap-4">
-      {showForm ? (
-        <TripForm values={trip} onChange={setTrip} onSubmit={analyze} loading={loading} />
-      ) : (
-        <>
-          <div className="flex h-12 items-center gap-3 rounded-control border border-line bg-surface-2 pl-3 pr-2">
-            <RouteIcon size={16} className="shrink-0 text-muted" aria-hidden="true" />
-            <div className="min-w-0 flex-1 truncate text-sm">
-              <span className="font-semibold text-fg">
-                {shortName(trip.origin)} → {shortName(trip.destination)}
-              </span>
-              <span className="text-muted"> · {formatLb(trip.loadLb)}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setEditing(true)}
-              aria-label="Edit trip"
-              title="Edit trip"
-              className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-control text-muted hover:bg-surface hover:text-fg"
-            >
-              <Pencil size={16} aria-hidden="true" />
-            </button>
+  const tripRow = (req: AnalyzeRequest | null) =>
+    req && (
+      <div className="flex h-12 items-center gap-3 rounded-control border border-line bg-surface-2 pl-3 pr-2">
+        <RouteIcon size={16} className="shrink-0 text-muted" aria-hidden="true" />
+        <div className="min-w-0 flex-1 truncate text-sm">
+          <span className="font-semibold text-fg">
+            {shortName(req.origin.label)} → {shortName(req.destination.label)}
+          </span>
+          <span className="text-muted"> · {formatLb(req.load_weight_lb)}</span>
+        </div>
+        {!loading && (
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            aria-label="Edit trip"
+            title="Edit trip"
+            className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-control text-muted hover:bg-surface hover:text-fg"
+          >
+            <Pencil size={16} aria-hidden="true" />
+          </button>
+        )}
+      </div>
+    )
+
+  const serverMessage = err && err.userFacing ? err.message : null
+
+  let body: React.ReactNode = null
+  if (loading) {
+    body = (
+      <>
+        {tripRow(pending)}
+        <AnalyzeProgress onCancel={analyzer.cancel} />
+        {analysis ? (
+          // keep the previous result visible (dimmed) rather than flashing to empty
+          <div className="pointer-events-none opacity-50" aria-hidden="true">
+            <RouteList analysis={analysis} selectedId={selectedId} onSelect={setSelectedId} />
           </div>
-          <RouteList analysis={analysis} selectedId={selectedId} onSelect={setSelectedId} />
-        </>
-      )}
-    </div>
-  )
+        ) : (
+          <SkeletonCards />
+        )}
+      </>
+    )
+  } else if (showForm) {
+    body = (
+      <>
+        <TripForm
+          values={trip}
+          onChange={setTrip}
+          onSubmit={() => submit(buildRequest(trip))}
+          loading={loading}
+          serverError={serverMessage}
+        />
+        {err && !err.userFacing && <ErrorCard error={err} onRetry={pending ? () => submit(pending) : undefined} />}
+        {analysis && !err && (
+          <button
+            type="button"
+            onClick={() => setEditing(false)}
+            className="h-8 cursor-pointer self-start rounded-control px-1 text-xs font-semibold text-primary hover:underline"
+          >
+            Back to results
+          </button>
+        )}
+      </>
+    )
+  } else if (analysis) {
+    body = (
+      <>
+        {tripRow(request)}
+        <RouteList key={fitKey} analysis={analysis} selectedId={selectedId} onSelect={setSelectedId} />
+      </>
+    )
+  }
+  const panelBody = <div className="flex flex-col gap-4">{body}</div>
 
   const slider = (
     <HeatmapSlider
@@ -108,7 +167,11 @@ export default function App() {
       onHourChange={setHour}
       playing={playing}
       onPlayingChange={setPlaying}
-      start={MOCK_START}
+      start={heatStart}
+      hours={maxHour}
+      loading={heat.isFetching && !heat.data}
+      failed={heat.isError}
+      onRetry={() => void heat.refetch()}
     />
   )
 
@@ -151,7 +214,10 @@ export default function App() {
               <h1 className="text-xl font-semibold leading-8 text-fg">Truck Weather Router</h1>
               <ThemeToggle theme={theme} onToggle={toggle} />
             </header>
-            <div data-scroll-area className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain pb-6 pl-6 pr-4 pt-1">
+            <div
+              data-scroll-area
+              className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain pb-6 pl-6 pr-4 pt-1"
+            >
               {panelBody}
             </div>
           </aside>

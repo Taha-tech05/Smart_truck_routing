@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Minus, Plus } from 'lucide-react'
-import type { Feature, FeatureCollection } from 'geojson'
+import type { Feature, FeatureCollection, Point } from 'geojson'
 import {
   AttributionControl,
   LngLatBounds,
@@ -35,7 +35,7 @@ const lineLayer = (i: number) => `route-${i}-line`
 
 export interface HeatmapView {
   enabled: boolean
-  data: HeatmapResponse
+  data: HeatmapResponse | null
   hour: number
 }
 
@@ -69,14 +69,24 @@ function pin(color: string): HTMLDivElement {
   return el
 }
 
+/** Point features are built once per response; each hour only rewrites the numeric weight `w`. */
+const heatCache = new WeakMap<HeatmapResponse, Feature<Point, { w: number }>[]>()
 function heatFeatures(data: HeatmapResponse, hour: number): FeatureCollection {
-  const features: Feature[] = []
-  data.points.forEach(([lat, lng], i) => {
-    const level = Number(data.levels[i][hour] ?? 0)
-    if (level < 1) return // Low is fully transparent: don't even send it to the layer
-    features.push({ type: 'Feature', properties: { level }, geometry: { type: 'Point', coordinates: [lng, lat] } })
+  let features = heatCache.get(data)
+  if (!features) {
+    features = data.points.map(([lat, lng]) => ({
+      type: 'Feature',
+      properties: { w: 0 },
+      geometry: { type: 'Point', coordinates: [lng, lat] },
+    }))
+    heatCache.set(data, features)
+  }
+  const out = features
+  data.levels.forEach((s, i) => {
+    const code = s.charCodeAt(hour) - 48
+    out[i].properties.w = code >= 0 && code <= 4 ? code : 0 // 0 (Low) is transparent
   })
-  return { type: 'FeatureCollection', features }
+  return { type: 'FeatureCollection', features: out }
 }
 
 function wholeLine(route: RouteResult): FeatureCollection {
@@ -324,35 +334,40 @@ export default function MapView(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitKey, selectedId])
 
-  // ---- heatmap: two layers cross-fade between hours -------------------------------------------
+  // ---- heatmap: two layers cross-fade between hours; updates are coalesced per animation frame ----
   useEffect(() => {
     const map = mapRef.current
     if (!map || !styleVersion || !map.getLayer(HEAT_LAYER[0])) return
     const h = heat.current
-    const vis = heatmap.enabled ? 'visible' : 'none'
+    const vis = heatmap.enabled && heatmap.data ? 'visible' : 'none'
     HEAT_LAYER.forEach((id) => map.setLayoutProperty(id, 'visibility', vis))
-    if (!heatmap.enabled) {
+    const data = heatmap.data
+    if (!heatmap.enabled || !data) {
       h.hour = -1
+      h.data = null
       return
     }
-    const src = (i: number) => map.getSource(HEAT_SRC[i]) as GeoJSONSource | undefined
-    const opacity = (i: number, v: number) => map.setPaintProperty(HEAT_LAYER[i], 'heatmap-opacity', v)
-    if (h.version !== styleVersion || h.hour < 0) {
-      // first draw (or after a style swap): show immediately on layer A
-      h.version = styleVersion
-      h.active = 0
-      src(0)?.setData(heatFeatures(heatmap.data, heatmap.hour))
-      opacity(0, HEAT_OPACITY)
-      opacity(1, 0)
-    } else if (h.hour !== heatmap.hour || h.data !== heatmap.data) {
-      const next = 1 - h.active
-      src(next)?.setData(heatFeatures(heatmap.data, heatmap.hour))
-      opacity(next, HEAT_OPACITY)
-      opacity(h.active, 0)
-      h.active = next
-    }
-    h.hour = heatmap.hour
-    h.data = heatmap.data
+    const raf = requestAnimationFrame(() => {
+      const src = (i: number) => map.getSource(HEAT_SRC[i]) as GeoJSONSource | undefined
+      const opacity = (i: number, v: number) => map.setPaintProperty(HEAT_LAYER[i], 'heatmap-opacity', v)
+      if (h.version !== styleVersion || h.hour < 0 || h.data !== data) {
+        // first draw, a style swap or another route's data: show immediately on layer A
+        h.version = styleVersion
+        h.active = 0
+        src(0)?.setData(heatFeatures(data, heatmap.hour))
+        opacity(0, HEAT_OPACITY)
+        opacity(1, 0)
+      } else if (h.hour !== heatmap.hour) {
+        const next = 1 - h.active
+        src(next)?.setData(heatFeatures(data, heatmap.hour))
+        opacity(next, HEAT_OPACITY)
+        opacity(h.active, 0)
+        h.active = next
+      }
+      h.hour = heatmap.hour
+      h.data = data
+    })
+    return () => cancelAnimationFrame(raf)
   }, [heatmap.enabled, heatmap.hour, heatmap.data, styleVersion])
 
   return (
@@ -401,10 +416,10 @@ function addLayers(map: MapLibreMap) {
       id: HEAT_LAYER[i],
       type: 'heatmap',
       source: srcId,
-      filter: ['>=', ['get', 'level'], 1],
+      filter: ['>=', ['get', 'w'], 1],
       layout: { visibility: 'none' },
       paint: {
-        'heatmap-weight': ['/', ['get', 'level'], 4],
+        'heatmap-weight': ['/', ['get', 'w'], 4],
         'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 3, 0.16, 8, 0.4],
         'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 3, 24, 5, 40, 8, 90, 10, 150],
         'heatmap-color': [

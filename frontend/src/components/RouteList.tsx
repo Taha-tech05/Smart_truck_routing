@@ -2,6 +2,7 @@ import { memo, useState } from 'react'
 import { AlertTriangle, X } from 'lucide-react'
 import type { AnalyzeResponse } from '../types'
 import RouteCard from './RouteCard'
+import { AllUnsafeBanner } from './ResultsStates'
 
 interface Props {
   analysis: AnalyzeResponse
@@ -11,11 +12,12 @@ interface Props {
 
 function RouteList({ analysis, selectedId, onSelect }: Props) {
   const [dismissed, setDismissed] = useState<string[]>([])
-  const warnings = analysis.warnings.filter((w) => !dismissed.includes(w))
-  const winner = analysis.routes.find((r) => r.recommended)
+  const warnings = [...new Set(analysis.warnings)].filter((w) => !dismissed.includes(w))
+  const winner = analysis.routes.find((r) => r.id === analysis.recommendation.route_id) ?? analysis.routes[0]
   const fastestId = analysis.routes.reduce((a, b) => (b.duration_s < a.duration_s ? b : a)).id
   return (
     <section aria-label="Route options" className="flex flex-col gap-4">
+      {analysis.recommendation.all_unsafe && <AllUnsafeBanner />}
       {warnings.map((w) => (
         <div
           key={w}
@@ -37,7 +39,7 @@ function RouteList({ analysis, selectedId, onSelect }: Props) {
         </div>
       ))}
       {analysis.routes.map((r) => {
-        const explanation = r.recommended
+        const explanation = r.id === analysis.recommendation.route_id
           ? analysis.recommendation.explanation
           : winner
             ? `Compared with the recommended route: ${diff(r.stats.severe_miles - winner.stats.severe_miles, 'Severe')}, ${diff(

@@ -23,6 +23,11 @@ export default function CheckpointPopup({ checkpoint: c }: { checkpoint: Checkpo
           </div>
         ))}
       </dl>
+      {c.beyond_forecast && (
+        <p className="mt-3 rounded-control bg-surface-2 px-2 py-1.5 text-xs text-muted">
+          Forecast unavailable, using last available hour.
+        </p>
+      )}
       <ul className="mt-3 list-disc space-y-1 pl-4 text-xs text-muted">
         {c.risk.reasons.map((r) => (
           <li key={r}>{r}</li>

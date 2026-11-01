@@ -1,5 +1,5 @@
 import { memo, useEffect, useId, useRef, useState } from 'react'
-import { Info, Pause, Play } from 'lucide-react'
+import { Info, Loader2, Pause, Play } from 'lucide-react'
 import { formatHour } from '../utils/format'
 import { LEVEL_NAMES, riskCssVar } from '../utils/risk'
 
@@ -12,6 +12,9 @@ interface Props {
   onPlayingChange: (v: boolean) => void
   start: Date
   hours?: number
+  loading?: boolean
+  failed?: boolean
+  onRetry?: () => void
 }
 
 const TICKS = [0, 12, 24, 36, 48]
@@ -99,6 +102,9 @@ function HeatmapSlider({
   onPlayingChange,
   start,
   hours = 48,
+  loading = false,
+  failed = false,
+  onRetry,
 }: Props) {
   const id = useId()
   const label = formatHour(at(start, hour))
@@ -154,7 +160,14 @@ function HeatmapSlider({
             </span>
           ))}
         </div>
-        <div />
+        <div className="flex h-4 items-center justify-end text-xs" aria-live="polite">
+          {loading && <Loader2 size={14} className="animate-spin text-muted" aria-label="Loading forecast" />}
+          {failed && !loading && (
+            <button type="button" onClick={onRetry} className="cursor-pointer font-semibold text-primary hover:underline">
+              Retry
+            </button>
+          )}
+        </div>
       </div>
     </section>
   )

@@ -137,3 +137,9 @@ available hour and are flagged `beyond_forecast` (with a warning).
 - [OpenRouteService](https://openrouteservice.org/) – geocoding and directions (needs `ORS_API_KEY`)
 - [Open-Meteo](https://open-meteo.com/) – weather forecasts (no key)
 - [OpenFreeMap](https://openfreemap.org/) – vector map tiles/styles (no key)
+
+## Frontend modes and checks
+
+- `VITE_USE_MOCKS=false` (default) calls the real API at `VITE_API_BASE_URL`; `VITE_USE_MOCKS=true` serves the built-in fake data for UI work (no backend needed).
+- `npm run screenshots` captures the app (use a mock-mode dev server) at 4 widths x 2 themes into `frontend/screenshots/`.
+- `node scripts/e2e-trips.mjs` drives the real UI against both running servers for six trips and prints timings, route distinctness and the slider network check.

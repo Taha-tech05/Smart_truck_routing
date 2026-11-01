@@ -1,158 +1,173 @@
-import { useId, useMemo, useState } from 'react'
-import { MOCK_PLACES } from '../mocks/places'
-import { MOCK_DEPARTURE } from '../mocks/clock'
+import { useId } from 'react'
+import { ArrowUpDown } from 'lucide-react'
+import PlaceField from './PlaceField'
+import type { AnalyzeRequest, Place } from '../types'
 
 export interface TripValues {
-  origin: string
-  destination: string
-  departure: string // datetime-local value
-  loadLb: number
+  originText: string
+  origin: Place | null
+  destText: string
+  destination: Place | null
+  departure: string // datetime-local value, in the user's timezone
+  loadText: string
   interval: 10 | 25 | 50
 }
 
 const MAX_LOAD = 120000
 const INTERVALS = [10, 25, 50] as const
+const HOUR = 3600_000
 
-function toLocalInput(d: Date): string {
-  const pad = (n: number) => n.toString().padStart(2, '0')
+const pad = (n: number) => n.toString().padStart(2, '0')
+
+export function toLocalInput(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-export const DEFAULT_TRIP: TripValues = {
-  origin: 'Dallas, TX, USA',
-  destination: 'Denver, CO, USA',
-  departure: toLocalInput(MOCK_DEPARTURE),
-  loadLb: 38000,
-  interval: 25,
+/** Now rounded UP to the next 15 minutes. */
+export function nextQuarterHour(now = new Date()): Date {
+  const q = 15 * 60_000
+  return new Date(Math.ceil(now.getTime() / q) * q)
+}
+
+/** ISO 8601 with the local UTC offset, e.g. 2026-11-02T08:00:00-06:00 */
+export function toOffsetISO(d: Date): string {
+  const off = -d.getTimezoneOffset()
+  const sign = off >= 0 ? '+' : '-'
+  const a = Math.abs(off)
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00${sign}${pad(Math.floor(a / 60))}:${pad(a % 60)}`
+}
+
+export function defaultTrip(): TripValues {
+  return {
+    originText: 'Dallas, TX, USA',
+    origin: { label: 'Dallas, TX, USA', lat: 32.7767, lng: -96.797 },
+    destText: 'Denver, CO, USA',
+    destination: { label: 'Denver, CO, USA', lat: 39.7392, lng: -104.9903 },
+    departure: toLocalInput(nextQuarterHour()),
+    loadText: '38000',
+    interval: 25,
+  }
+}
+
+export interface TripErrors {
+  origin?: string
+  destination?: string
+  departure?: string
+  load?: string
+}
+
+export function validateTrip(v: TripValues, now = new Date()): TripErrors {
+  const e: TripErrors = {}
+  if (!v.origin) e.origin = v.originText.trim() ? 'Choose a place from the suggestions.' : 'Enter an origin.'
+  if (!v.destination) e.destination = v.destText.trim() ? 'Choose a place from the suggestions.' : 'Enter a destination.'
+  if (v.origin && v.destination && v.origin.lat === v.destination.lat && v.origin.lng === v.destination.lng)
+    e.destination = 'Origin and destination must be different places.'
+  const d = new Date(v.departure)
+  if (!v.departure || Number.isNaN(d.getTime())) e.departure = 'Enter a departure time.'
+  else if (d.getTime() < now.getTime() - HOUR) e.departure = 'Departure can be at most 1 hour in the past.'
+  else if (d.getTime() > now.getTime() + 7 * 24 * HOUR) e.departure = 'Departure can be at most 7 days ahead.'
+  const load = Number(v.loadText)
+  if (v.loadText.trim() === '' || !Number.isInteger(load) || load < 0 || load > MAX_LOAD)
+    e.load = 'Enter a whole number from 0 to 120,000 lb.'
+  return e
+}
+
+export function buildRequest(v: TripValues): AnalyzeRequest {
+  return {
+    origin: v.origin!,
+    destination: v.destination!,
+    departure_time: toOffsetISO(new Date(v.departure)),
+    load_weight_lb: Number(v.loadText),
+    interval_miles: v.interval,
+  }
 }
 
 const inputBase =
   'h-11 w-full rounded-control border border-line bg-surface-2 px-3 text-sm text-fg placeholder:text-muted'
-
-/** Autocomplete input (UI only: filters a fake list). */
-function PlaceInput({
-  label,
-  value,
-  onChange,
-}: {
-  label: string
-  value: string
-  onChange: (v: string) => void
-}) {
-  const id = useId()
-  const [open, setOpen] = useState(false)
-  const [active, setActive] = useState(0)
-  const options = useMemo(() => {
-    const q = value.trim().toLowerCase()
-    return MOCK_PLACES.filter((p) => p.toLowerCase().includes(q) && p !== value).slice(0, 5)
-  }, [value])
-  const show = open && options.length > 0
-
-  const choose = (p: string) => {
-    onChange(p)
-    setOpen(false)
-  }
-
-  return (
-    <div className="relative">
-      <label htmlFor={id} className="mb-1.5 block text-xs font-semibold text-muted">
-        {label}
-      </label>
-      <input
-        id={id}
-        role="combobox"
-        aria-expanded={show}
-        aria-controls={`${id}-list`}
-        aria-autocomplete="list"
-        aria-activedescendant={show ? `${id}-opt-${active}` : undefined}
-        autoComplete="off"
-        value={value}
-        placeholder="City or address"
-        className={inputBase}
-        onChange={(e) => {
-          onChange(e.target.value)
-          setOpen(true)
-          setActive(0)
-        }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 120)}
-        onKeyDown={(e) => {
-          if (e.key === 'ArrowDown' && show) {
-            e.preventDefault()
-            setActive((a) => (a + 1) % options.length)
-          } else if (e.key === 'ArrowUp' && show) {
-            e.preventDefault()
-            setActive((a) => (a - 1 + options.length) % options.length)
-          } else if (e.key === 'Enter' && show) {
-            e.preventDefault()
-            choose(options[active])
-          } else if (e.key === 'Escape') setOpen(false)
-        }}
-      />
-      {show && (
-        <ul
-          id={`${id}-list`}
-          role="listbox"
-          aria-label={`${label} suggestions`}
-          className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-control border border-line bg-surface shadow-panel"
-        >
-          {options.map((p, i) => (
-            <li
-              key={p}
-              id={`${id}-opt-${i}`}
-              role="option"
-              aria-selected={i === active}
-              onMouseDown={(e) => {
-                e.preventDefault()
-                choose(p)
-              }}
-              className={`flex min-h-11 cursor-pointer items-center px-3 text-sm ${i === active ? 'bg-surface-2' : ''}`}
-            >
-              {p}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  )
-}
 
 interface Props {
   values: TripValues
   onChange: (v: TripValues) => void
   onSubmit: () => void
   loading: boolean
+  /** Message from a backend 400, shown under the form. */
+  serverError?: string | null
 }
 
-export default function TripForm({ values, onChange, onSubmit, loading }: Props) {
+export default function TripForm({ values, onChange, onSubmit, loading, serverError }: Props) {
   const loadId = useId()
   const departId = useId()
   const set = <K extends keyof TripValues>(k: K, v: TripValues[K]) => onChange({ ...values, [k]: v })
-  const pct = Math.min(100, Math.max(0, (values.loadLb / MAX_LOAD) * 100))
+  const errors = validateTrip(values)
+  const valid = Object.keys(errors).length === 0
+  const load = Number(values.loadText)
+  const pct = Math.min(100, Math.max(0, ((Number.isFinite(load) ? load : 0) / MAX_LOAD) * 100))
+  // a place error only shows once the user has typed something
+  const showOrigin = values.originText.trim() ? errors.origin : undefined
+  const showDest = values.destText.trim() ? errors.destination : undefined
+
+  const swap = () =>
+    onChange({
+      ...values,
+      originText: values.destText,
+      origin: values.destination,
+      destText: values.originText,
+      destination: values.origin,
+    })
 
   return (
     <form
       className="flex flex-col gap-4"
       onSubmit={(e) => {
         e.preventDefault()
-        onSubmit()
+        if (valid && !loading) onSubmit()
       }}
       aria-label="Trip details"
+      noValidate
     >
-      <PlaceInput label="Origin" value={values.origin} onChange={(v) => set('origin', v)} />
-      <PlaceInput label="Destination" value={values.destination} onChange={(v) => set('destination', v)} />
+      <div className="relative flex flex-col gap-4">
+        <PlaceField
+          label="Origin"
+          text={values.originText}
+          place={values.origin}
+          onText={(t) => onChange({ ...values, originText: t, origin: null })}
+          onSelect={(p) => onChange({ ...values, originText: p.label, origin: p })}
+          error={showOrigin}
+          inputClass={`${inputBase} pr-10`}
+        />
+        <button
+          type="button"
+          onClick={swap}
+          aria-label="Swap origin and destination"
+          title="Swap origin and destination"
+          className="absolute right-2 top-1/2 z-10 inline-flex h-8 w-8 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-line bg-surface text-muted hover:text-fg"
+        >
+          <ArrowUpDown size={16} aria-hidden="true" />
+        </button>
+        <PlaceField
+          label="Destination"
+          text={values.destText}
+          place={values.destination}
+          onText={(t) => onChange({ ...values, destText: t, destination: null })}
+          onSelect={(p) => onChange({ ...values, destText: p.label, destination: p })}
+          error={showDest}
+          inputClass={`${inputBase} pr-10`}
+        />
+      </div>
 
       <div>
         <label htmlFor={departId} className="mb-1.5 block text-xs font-semibold text-muted">
-          Departure
+          Departure <span className="font-medium">(your local time)</span>
         </label>
         <input
           id={departId}
           type="datetime-local"
           value={values.departure}
           onChange={(e) => set('departure', e.target.value)}
-          className={inputBase}
+          aria-invalid={!!errors.departure}
+          className={`${inputBase} ${errors.departure ? 'border-risk-severe' : ''}`}
         />
+        {errors.departure && <p className="mt-1 text-xs text-risk-severe">{errors.departure}</p>}
       </div>
 
       <div>
@@ -167,12 +182,14 @@ export default function TripForm({ values, onChange, onSubmit, loading }: Props)
             min={0}
             max={MAX_LOAD}
             step={500}
-            value={values.loadLb}
-            onChange={(e) => set('loadLb', Math.min(MAX_LOAD, Math.max(0, Number(e.target.value) || 0)))}
-            className={`${inputBase} pr-10`}
+            value={values.loadText}
+            onChange={(e) => set('loadText', e.target.value)}
+            aria-invalid={!!errors.load}
+            className={`${inputBase} pr-10 ${errors.load ? 'border-risk-severe' : ''}`}
           />
           <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted">lb</span>
         </div>
+        {errors.load && <p className="mt-1 text-xs text-risk-severe">{errors.load}</p>}
         <div
           className="mt-2 h-1.5 overflow-hidden rounded-badge bg-surface-2"
           role="img"
@@ -217,11 +234,16 @@ export default function TripForm({ values, onChange, onSubmit, loading }: Props)
 
       <button
         type="submit"
-        disabled={loading}
-        className="h-11 w-full cursor-pointer rounded-control bg-accent text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-70"
+        disabled={!valid || loading}
+        className="h-11 w-full cursor-pointer rounded-control bg-accent text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {loading ? 'Analyzing…' : 'Analyze routes'}
+        Analyze routes
       </button>
+      {serverError && (
+        <p role="alert" className="rounded-control border border-risk-severe/40 bg-surface-2 px-3 py-2 text-xs text-fg">
+          {serverError}
+        </p>
+      )}
     </form>
   )
 }

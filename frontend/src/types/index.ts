@@ -1,3 +1,5 @@
 export * from './analyze'
 export * from './heatmap'
+export * from './geocode'
+export * from './request'
 export type { HealthResponse } from './health'

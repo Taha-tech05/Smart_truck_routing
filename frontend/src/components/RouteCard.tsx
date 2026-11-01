@@ -88,6 +88,7 @@ function RouteCard({ route, selected, explanation, fastest, onSelect }: Props) {
         <div className="min-w-0 flex-1 truncate text-base font-semibold leading-6 text-fg" title={route.summary}>
           {route.summary}
         </div>
+        {route.provider && <span className="shrink-0 text-xs text-muted">{route.provider}</span>}
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 pl-9">

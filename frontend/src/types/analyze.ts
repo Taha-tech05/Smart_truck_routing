@@ -46,6 +46,8 @@ export interface LineStringGeometry {
 export interface RouteResult {
   id: string
   summary: string
+  /** Not sent by the current backend; shown as a small tag when present. */
+  provider?: string
   distance_miles: number
   duration_s: number
   geometry: LineStringGeometry

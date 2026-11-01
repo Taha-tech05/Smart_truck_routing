@@ -1,6 +1,6 @@
 import type { Feature, FeatureCollection, LineString, Point } from 'geojson'
 import type { Checkpoint, RouteResult } from '../types'
-import { cumulative, slice, type LngLat } from './geo'
+import { length as lineLength, lineSliceAlong } from '@turf/turf'
 
 export const EMPTY_FC: FeatureCollection = { type: 'FeatureCollection', features: [] }
 
@@ -9,9 +9,17 @@ export const EMPTY_FC: FeatureCollection = { type: 'FeatureCollection', features
  * (covers_start..covers_end miles) and that stretch takes the checkpoint's risk level.
  * Adjacent stretches with the same level are merged.
  */
+/** A stretch of the route between two mile marks, via turf.lineSliceAlong (clamped to the line). */
+function sliceMiles(line: Feature<LineString>, total: number, from: number, to: number) {
+  const a = Math.min(Math.max(from, 0), total)
+  const b = Math.min(Math.max(to, 0), total)
+  if (b - a < 1e-6) return line.geometry.coordinates.slice(0, 2)
+  return lineSliceAlong(line, a, b, { units: 'miles' }).geometry.coordinates
+}
+
 export function riskSegments(route: RouteResult): FeatureCollection<LineString> {
-  const coords = route.geometry.coordinates as LngLat[]
-  const cum = cumulative(coords)
+  const line: Feature<LineString> = { type: 'Feature', properties: {}, geometry: route.geometry }
+  const total = lineLength(line, { units: 'miles' })
   const features: Feature<LineString>[] = []
   let current: { level: number; from: number; to: number } | null = null
 
@@ -20,7 +28,7 @@ export function riskSegments(route: RouteResult): FeatureCollection<LineString> 
     features.push({
       type: 'Feature',
       properties: { level: current.level, routeId: route.id },
-      geometry: { type: 'LineString', coordinates: slice(coords, cum, current.from, current.to) },
+      geometry: { type: 'LineString', coordinates: sliceMiles(line, total, current.from, current.to) },
     })
   }
 
