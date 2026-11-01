@@ -1,0 +1,45 @@
+/* Design tokens. Every colour in the app comes from these variables. */
+:root,
+:root[data-theme="light"] {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --border: #e1e6ed;
+  --fg: #0f1b2d;
+  --muted: #5b6678;
+  --primary: #12263f;
+  --accent: #f5a524;
+  --on-accent: #12263f;
+  --focus: #2f6fde;
+
+  --risk-low: #2e9e5b;
+  --risk-moderate: #e3b711;
+  --risk-high: #ee7f1a;
+  --risk-severe: #d32f2f;
+  --risk-notravel: #6a2c9e;
+
+  --shadow: 0 8px 24px rgb(15 27 45 / 0.14), 0 2px 6px rgb(15 27 45 / 0.08);
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0b1220;
+  --surface: #121c2e;
+  --surface-2: #1a2638;
+  --border: #263349;
+  --fg: #e8edf5;
+  --muted: #93a0b5;
+  --primary: #8db4f0;
+  --accent: #ffb938;
+  --on-accent: #0b1220;
+  --focus: #6ea2ff;
+
+  --risk-low: #3dbe74;
+  --risk-moderate: #f2d13d;
+  --risk-high: #ff9f43;
+  --risk-severe: #ff5a5a;
+  --risk-notravel: #a66be0;
+
+  --shadow: 0 8px 28px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.35);
+  color-scheme: dark;
+}
