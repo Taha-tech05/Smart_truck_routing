@@ -92,6 +92,11 @@ function wholeLine(route: RouteResult): FeatureCollection {
   }
 }
 
+/** Live height of the slider card (it collapses when the heatmap is off). */
+function sliderHeight(): number {
+  return document.querySelector<HTMLElement>('[aria-label="Weather heatmap timeline"]')?.offsetHeight ?? 76
+}
+
 function panelWidth(): number {
   const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--panel-w'))
   return Number.isFinite(v) ? v : 400
@@ -103,12 +108,12 @@ function tuneBasemap(map: MapLibreMap, theme: Theme) {
     /^(place_hamlet|place_suburbs|place_villages|place_(city|capital)_dot|roadname|housenumber|poi_|highway-name|highway-shield|road_shield|airport|label_other|label_village|waterway|watername_lake_(pois|line)|water_name_line)/
   const dark = theme === 'dark'
   const darkPaint: Record<string, [string, string]> = {
-    background: ['background-color', '#243247'],
-    water: ['fill-color', '#162b46'],
-    water_shadow: ['fill-color', '#162b46'],
-    landcover: ['fill-color', '#2a3b50'],
-    landuse: ['fill-color', '#27374c'],
-    landuse_residential: ['fill-color', '#27374c'],
+    background: ['background-color', '#2c3d56'],
+    water: ['fill-color', '#12263f'],
+    water_shadow: ['fill-color', '#12263f'],
+    landcover: ['fill-color', '#33465f'],
+    landuse: ['fill-color', '#2f4059'],
+    landuse_residential: ['fill-color', '#2f4059'],
     park_national_park: ['fill-color', '#2a3f4f'],
     park_nature_reserve: ['fill-color', '#2a3f4f'],
     boundary_state: ['line-color', '#5a6d8a'],
@@ -128,9 +133,9 @@ function tuneBasemap(map: MapLibreMap, theme: Theme) {
         const p = darkPaint[layer.id]
         if (p) map.setPaintProperty(layer.id, p[0] as never, p[1] as never)
         else if (layer.type === 'line' && /^(road|bridge|tunnel)_.*_fill/.test(layer.id))
-          map.setPaintProperty(layer.id, 'line-color', '#41536f')
+          map.setPaintProperty(layer.id, 'line-color', '#5b7092')
         else if (layer.type === 'line' && /^(road|bridge|tunnel)_.*_case/.test(layer.id))
-          map.setPaintProperty(layer.id, 'line-color', '#243247')
+          map.setPaintProperty(layer.id, 'line-color', '#2c3d56')
       }
     } catch {
       /* layer without that property: ignore */
@@ -311,8 +316,8 @@ export default function MapView(props: Props) {
     list.forEach((r) => r.geometry.coordinates.forEach((c) => bounds.extend(c as [number, number])))
     map.fitBounds(bounds, {
       padding: isMobile
-        ? { top: 72, right: 24, bottom: PEEK_PX + 76 + 8 + 24, left: 24 }
-        : { top: 48, right: 48, bottom: 160, left: panelWidth() + 48 },
+        ? { top: 72, right: 24, bottom: PEEK_PX + sliderHeight() + 8 + 24, left: 24 }
+        : { top: 48, right: 48, bottom: sliderHeight() + 16 + 48, left: panelWidth() + 48 },
       duration: 600,
       maxZoom: 12,
     })

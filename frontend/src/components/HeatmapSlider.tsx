@@ -74,8 +74,9 @@ function Legend() {
       {open && (
         <ul
           aria-label="Risk legend"
-          className="float-card absolute bottom-full left-0 mb-3 w-36 space-y-2 rounded-control p-3 text-xs"
+          className="float-card absolute bottom-full left-0 mb-3 w-56 space-y-2 rounded-control p-3 text-xs"
         >
+          <li className="text-muted">Colors show risk for your load at this hour.</li>
           {LEVEL_NAMES.map((name, level) => (
             <li key={name} className="flex items-center gap-2 text-fg">
               <span aria-hidden="true" className="h-2 w-2 rounded-full" style={{ background: riskCssVar(level) }} />
