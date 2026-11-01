@@ -1,4 +1,4 @@
-﻿"""Open-Meteo hourly forecast client (no API key).
+"""Open-Meteo hourly forecast client (no API key).
 
 Wind metric: we use **sustained** wind (``wind_speed_10m``), NOT gusts
 (``wind_gusts_10m``). The risk thresholds are defined on sustained wind speed;

@@ -1,4 +1,4 @@
-﻿"""Route aggregation and ranking. Pure functions, no I/O, no Django imports.
+"""Route aggregation and ranking. Pure functions, no I/O, no Django imports.
 
 Inputs are already in miles / mph / inches-per-hour / seconds; no unit
 conversion happens here.

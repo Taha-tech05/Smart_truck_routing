@@ -1,4 +1,4 @@
-﻿"""Sample checkpoints along a route with ETAs and coverage. Pure functions, no I/O.
+"""Sample checkpoints along a route with ETAs and coverage. Pure functions, no I/O.
 
 Coordinates are ``(lng, lat)`` tuples (GeoJSON order) everywhere in this module.
 

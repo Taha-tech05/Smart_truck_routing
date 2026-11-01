@@ -1,4 +1,4 @@
-﻿"""Tests for services.checkpoints."""
+"""Tests for services.checkpoints."""
 import math
 from datetime import datetime, timezone
 

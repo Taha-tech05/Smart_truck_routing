@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { Map as MapLibreMap, NavigationControl } from '../utils/maplibre'
 
 const STYLE_URL =

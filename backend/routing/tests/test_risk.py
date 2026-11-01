@@ -1,4 +1,4 @@
-﻿"""Tests for services.risk."""
+"""Tests for services.risk."""
 import pytest
 
 from routing.services.risk import (

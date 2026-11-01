@@ -1,4 +1,4 @@
-﻿"""Geocoding via the OpenRouteService geocode API (same ORS_API_KEY).
+"""Geocoding via the OpenRouteService geocode API (same ORS_API_KEY).
 
 Results are ``{"label", "lat", "lng"}`` dicts, at most 5 per query.
 """

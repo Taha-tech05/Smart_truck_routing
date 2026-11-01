@@ -1,4 +1,4 @@
-﻿/**
+/**
  * MapLibre GL setup.
  *
  * maplibre-gl v6 ships its web worker as a separate file

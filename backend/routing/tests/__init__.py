@@ -1,1 +1,1 @@
-﻿"""Tests for the routing app."""
+"""Tests for the routing app."""

@@ -1,4 +1,4 @@
-﻿"""Weather risk scoring. Pure functions, no I/O, no Django imports.
+"""Weather risk scoring. Pure functions, no I/O, no Django imports.
 
 Units: wind in mph, rain in inches/hour, snow in inches/hour, load in pounds.
 

@@ -1,4 +1,4 @@
-﻿# Project rules
+# Project rules
 
 ## Git commits
 - Commits must be authored under the user's own git identity (the configured `user.name` / `user.email`).

@@ -1,4 +1,4 @@
-﻿"""DRF serializers (request validation) for the routing API."""
+"""DRF serializers (request validation) for the routing API."""
 from __future__ import annotations
 
 from datetime import timedelta

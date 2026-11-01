@@ -1,4 +1,4 @@
-﻿/** Origin/destination/departure-time form (not built yet). */
+/** Origin/destination/departure-time form (not built yet). */
 export default function TripForm() {
   return null
 }

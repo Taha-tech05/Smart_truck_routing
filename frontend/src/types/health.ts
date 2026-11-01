@@ -1,3 +1,3 @@
-﻿export interface HealthResponse {
+export interface HealthResponse {
   status: string
 }

@@ -1,4 +1,4 @@
-﻿import Map from './components/Map'
+import Map from './components/Map'
 import { useHealth } from './hooks/useHealth'
 
 export default function App() {

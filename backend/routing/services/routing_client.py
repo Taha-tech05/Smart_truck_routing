@@ -1,4 +1,4 @@
-﻿"""OpenRouteService directions client (profile ``driving-hgv``, GeoJSON output).
+"""OpenRouteService directions client (profile ``driving-hgv``, GeoJSON output).
 
 All HTTP for directions lives here. Coordinates in public APIs are
 ``(lat, lng)`` for origin/destination and ``(lng, lat)`` (GeoJSON order) for

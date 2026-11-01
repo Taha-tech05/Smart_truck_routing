@@ -1,4 +1,4 @@
-﻿"""Tests for services.recommend."""
+"""Tests for services.recommend."""
 from datetime import datetime, timezone
 
 import pytest
