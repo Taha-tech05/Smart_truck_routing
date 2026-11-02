@@ -324,6 +324,7 @@ def get_routes(
     requests only produce warnings.
     """
     warnings: list[str] = []
+    no_alternatives_msg: str | None = None
     o = [origin[1], origin[0]]
     d = [destination[1], destination[0]]
 
@@ -332,7 +333,8 @@ def get_routes(
     except NoRouteFoundError:
         # e.g. route too long for the alternatives algorithm: retry plain.
         found = _directions([o, d], api_key, alternatives=False)
-        warnings.append("Alternative routes are not available for this trip length.")
+        no_alternatives_msg = "Alternative routes are not available for this trip length."
+        warnings.append(no_alternatives_msg)
     if not found:
         raise NoRouteFoundError("No route found between the given points")
 
@@ -377,6 +379,9 @@ def get_routes(
             candidates = distinct(candidates + [v])
 
     candidates = sorted(candidates, key=lambda r: r[1])[:MAX_ROUTES]
+    if no_alternatives_msg and len(candidates) > 1:
+        # the via-point search did find alternatives, so the warning would be misleading
+        warnings.remove(no_alternatives_msg)
     if len(candidates) < MAX_ROUTES:
         warnings.append(
             f"Only {len(candidates)} distinct route{'s' if len(candidates) != 1 else ''} found."

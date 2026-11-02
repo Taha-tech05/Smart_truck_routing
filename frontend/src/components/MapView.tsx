@@ -66,9 +66,19 @@ function rgba(hex: string, a: number): string {
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`
 }
 
-function pin(color: string): HTMLDivElement {
+function pin(color: string, name?: string): HTMLDivElement {
   const el = document.createElement('div')
-  el.style.cssText = `width:14px;height:14px;box-sizing:border-box;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 1px 3px rgb(0 0 0 / 0.35)`
+  el.style.cssText = `width:14px;height:14px;box-sizing:border-box;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 1px 3px rgb(0 0 0 / 0.35);position:relative`
+  if (name) {
+    // the basemap label for this city is hidden, so the pin carries its own name
+    const label = document.createElement('span')
+    label.textContent = name
+    label.style.cssText =
+      'position:absolute;left:50%;top:-8px;transform:translate(-50%,-100%);white-space:nowrap;pointer-events:none;' +
+      'font:600 12px/16px system-ui,sans-serif;padding:1px 6px;border-radius:6px;background:var(--surface);color:var(--fg);' +
+      'border:1px solid var(--border);box-shadow:0 1px 3px rgb(0 0 0 / 0.25)'
+    el.appendChild(label)
+  }
   return el
 }
 
@@ -356,8 +366,8 @@ export default function MapView(props: Props) {
     if (first) {
       const c = first.geometry.coordinates
       markersRef.current = [
-        new Marker({ element: pin(tokenColor('--risk-low')) }).setLngLat(c[0]).addTo(map),
-        new Marker({ element: pin('#0f1b2d') }).setLngLat(c[c.length - 1]).addTo(map),
+        new Marker({ element: pin(tokenColor('--risk-low'), endpointNames?.[0]) }).setLngLat(c[0]).addTo(map),
+        new Marker({ element: pin('#0f1b2d', endpointNames?.[1]) }).setLngLat(c[c.length - 1]).addTo(map),
       ]
     }
   }, [routes, selectedId, styleVersion])
