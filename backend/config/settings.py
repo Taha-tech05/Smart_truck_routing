@@ -33,7 +33,7 @@ def _csv(name, default=""):
 SECRET_KEY = os.environ.get("SECRET_KEY", "insecure-dev-key")
 DEBUG = os.environ.get("DEBUG", "False").lower() in ("1", "true", "yes")
 ALLOWED_HOSTS = _csv("ALLOWED_HOSTS", "localhost,127.0.0.1")
-CORS_ALLOWED_ORIGINS = _csv("CORS_ALLOWED_ORIGINS")
+CORS_ALLOWED_ORIGINS = _csv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
 ORS_API_KEY = os.environ.get("ORS_API_KEY", "")
 
 

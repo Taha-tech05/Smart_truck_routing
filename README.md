@@ -8,6 +8,34 @@ frontend/   React + Vite + TypeScript + Tailwind + MapLibre
 design/     Reference images
 ```
 
+## Quick start with Docker
+
+Requires [Docker](https://docs.docker.com/get-docker/) with Compose v2.
+
+1. `git clone <this repo> && cd truck-weather-router`
+2. `cp .env.example .env`, then set `ORS_API_KEY` (free key at [openrouteservice.org](https://openrouteservice.org/dev/#/signup)) and a random `SECRET_KEY`
+3. `docker compose up --build`
+4. Open http://localhost:5173 (API health: http://localhost:8000/api/health)
+
+For hot reload while developing: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build`.
+
+**External services**
+
+| Service | Used for | Key |
+| --- | --- | --- |
+| OpenRouteService | truck routing, place search, route place names | `ORS_API_KEY` (free tier has daily quotas) |
+| Open-Meteo | wind / rain / snow forecast | none |
+| OpenFreeMap (and the CARTO dark style) | map tiles | none |
+
+**Common problems**
+
+- *Port already in use* - stop whatever uses 8000 or 5173, or change the left side of the `ports:` mapping in `docker-compose.yml`. If you move the frontend, update `CORS_ALLOWED_ORIGINS` to match.
+- *"Routing service rejected the key" / empty suggestions* - `ORS_API_KEY` is missing, wrong, or its daily quota is used up (ORS reports both the same way). Edit `.env`, then `docker compose up -d --force-recreate backend`.
+- *Requests fail in the browser with a CORS error* - `CORS_ALLOWED_ORIGINS` must equal the exact address in your address bar (`http://localhost:5173` is not `http://127.0.0.1:5173`; list both, comma separated, if needed).
+- *Frontend cannot reach the API from another machine* - `VITE_API_BASE_URL` is baked in at build time; set it in `.env` to the address your browser uses and rebuild with `docker compose up --build`.
+
+## Manual setup (without Docker)
+
 ## Backend setup
 Requires Python 3.11+.
 

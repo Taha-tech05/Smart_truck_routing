@@ -1,0 +1,23 @@
+# Hot-reload development:  docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+services:
+  backend:
+    command: python manage.py runserver 0.0.0.0:8000
+    environment:
+      DEBUG: "True"
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
