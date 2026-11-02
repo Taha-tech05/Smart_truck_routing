@@ -32,7 +32,7 @@ const WAYPOINTS: Record<string, { speed: number; path: LngLat[] }> = {
 }
 
 const INTERVAL = 25
-const VIA = ['Via Amarillo (I-27)', 'Via Oklahoma City (US-287)', 'Via Wichita (I-35 / US-34)']
+const VIA = ['Via Amarillo, TX', 'Via Oklahoma City and Wichita Falls (near Lawton)', 'Via Wichita and Salina, KS']
 const round2 = (n: number) => Math.round(n * 100) / 100
 const r1 = (n: number) => Math.round(n * 10) / 10
 
@@ -116,12 +116,20 @@ export function buildMockAnalysis(): AnalyzeResponse {
     return 0
   })
 
+  const fastestS = Math.min(...built.map((b) => b.durationS))
+  const delta = (s: number) => {
+    const min = Math.round((s - fastestS) / 60)
+    if (min <= 0) return 'Fastest'
+    const h = Math.floor(min / 60)
+    return `+${h ? `${h} h ${min % 60} min` : `${min} min`} vs fastest`
+  }
   const routes: RouteResult[] = built.map((b, idx) => {
     const summary = VIA[idx]
     const rank = ranked.indexOf(b) + 1
     return {
       id: b.id,
       summary,
+      delta_label: delta(b.durationS),
       distance_miles: round2(b.miles),
       duration_s: Math.round(b.durationS),
       geometry: { type: 'LineString', coordinates: b.coords },
@@ -133,7 +141,7 @@ export function buildMockAnalysis(): AnalyzeResponse {
   })
 
   const [win, run] = ranked
-  const rn = `Route ${built.indexOf(run) + 1}`
+  const rn = VIA[built.indexOf(run)]
   const w = win.stats
   const r = run.stats
   let explanation: string

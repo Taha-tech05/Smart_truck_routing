@@ -1,5 +1,5 @@
 import { memo, useState } from 'react'
-import { Clock, Flag, Route as RouteIcon } from 'lucide-react'
+import { Flag } from 'lucide-react'
 import type { RouteResult } from '../types'
 import { formatDuration, formatEta, formatMiles } from '../utils/format'
 import { LEVEL_NAMES, MILES_KEYS, riskCssVar } from '../utils/risk'
@@ -78,44 +78,46 @@ function RouteCard({ route, selected, explanation, fastest, onSelect }: Props) {
           : undefined
       }
     >
-      <div className="flex items-center gap-3">
+      <div className="flex items-start gap-3">
         <span
           aria-hidden="true"
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-bg"
+          className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-bg"
         >
           {route.rank}
         </span>
-        <div className="min-w-0 flex-1 truncate text-base font-semibold leading-6 text-fg" title={route.summary}>
+        <div
+          className="line-clamp-2 min-w-0 flex-1 break-words text-base font-semibold leading-6 text-fg"
+          title={route.summary}
+        >
           {route.summary}
         </div>
-        {route.provider && <span className="shrink-0 text-xs text-muted">{route.provider}</span>}
+        {route.provider && <span className="mt-1 shrink-0 text-xs text-muted">{route.provider}</span>}
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 pl-9">
-        <div className="inline-flex items-center gap-3 text-sm">
-          <span className="inline-flex items-center gap-1.5">
-            <RouteIcon size={16} className="text-muted" aria-hidden="true" />
-            <span className="font-semibold text-fg">{formatMiles(route.distance_miles)}</span>
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <Clock size={16} className="text-muted" aria-hidden="true" />
-            <span className="font-semibold text-fg">{formatDuration(route.duration_s)}</span>
-          </span>
-        </div>
-        {route.recommended && fastest ? (
-          <span className="inline-flex h-5 items-center rounded-badge bg-accent px-2 text-xs font-semibold text-on-accent">
-            Recommended - also fastest
-          </span>
-        ) : route.recommended ? (
-          <span className="inline-flex h-5 items-center rounded-badge bg-accent px-2 text-xs font-semibold text-on-accent">
-            Recommended
-          </span>
-        ) : fastest ? (
-          <span className="inline-flex h-5 items-center rounded-badge border border-line bg-surface-2 px-2 text-xs font-semibold text-muted">
-            Fastest
-          </span>
-        ) : null}
+      <div className="mt-1 pl-9 text-sm text-muted">
+        <span className="font-semibold text-fg">{formatMiles(route.distance_miles)}</span>
+        <span aria-hidden="true"> · </span>
+        <span className="font-semibold text-fg">{formatDuration(route.duration_s)}</span>
       </div>
+
+      {(route.recommended || fastest || !!route.delta_label) && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1.5 pl-9">
+          {route.recommended ? (
+            <span className="inline-flex h-5 items-center rounded-badge bg-accent px-2 text-xs font-semibold text-on-accent">
+              {fastest ? 'Recommended - also fastest' : 'Recommended'}
+            </span>
+          ) : fastest ? (
+            <span className="inline-flex h-5 items-center rounded-badge border border-line bg-surface-2 px-2 text-xs font-semibold text-muted">
+              Fastest
+            </span>
+          ) : null}
+          {!fastest && route.delta_label && (
+            <span className="inline-flex h-5 items-center rounded-badge bg-surface-2 px-2 text-xs text-muted">
+              {route.delta_label}
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="mt-3">
         <RiskBar route={route} />

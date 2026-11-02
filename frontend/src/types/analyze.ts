@@ -45,7 +45,10 @@ export interface LineStringGeometry {
 
 export interface RouteResult {
   id: string
+  /** Descriptive title from the backend, e.g. "Via Amarillo, TX" ("Route N" when unnamed). */
   summary: string
+  /** "Fastest" or "+1 h 14 min vs fastest". */
+  delta_label: string
   /** Not sent by the current backend; shown as a small tag when present. */
   provider?: string
   distance_miles: number
