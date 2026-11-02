@@ -35,7 +35,10 @@ CHUNK_SIZE = 50
 CACHE_TTL_S = 30 * 60
 MAX_RETRIES = 2
 BACKOFF_S = (0.5, 1.0)
-MAX_WORKERS = 4
+MAX_WORKERS = 2  # Open-Meteo throttles shared cloud IPs; fewer parallel calls
+RATE_LIMIT_RETRIES = 3
+RATE_LIMIT_BACKOFF_S = (1.5, 3.0, 6.0)
+MAX_RETRY_AFTER_S = 8.0
 HOURLY_VARS = "wind_speed_10m,rain,snowfall"
 
 Point = tuple[float, float]  # (lat, lng)
@@ -133,7 +136,10 @@ def _fetch_chunk(keys: list[CacheKey], forecast_days: int) -> list[list[HourlyRe
         "forecast_days": forecast_days,
     }
     last_error = "unknown error"
-    for attempt in range(MAX_RETRIES + 1):
+    rate_limited = 0
+    attempt = -1
+    while attempt < MAX_RETRIES:
+        attempt += 1
         try:
             resp = _get_client().get(OPEN_METEO_BASE_URL, params=params, timeout=HTTP_TIMEOUT_S)
         except httpx.TimeoutException:
@@ -147,7 +153,18 @@ def _fetch_chunk(keys: list[CacheKey], forecast_days: int) -> list[list[HourlyRe
             if resp.status_code >= 500:
                 last_error = f"server error ({resp.status_code})"
             elif resp.status_code == 429:
-                raise WeatherError("Open-Meteo rate limit exceeded")
+                # Shared cloud IPs get throttled: wait (honouring Retry-After) and try again.
+                if rate_limited >= RATE_LIMIT_RETRIES:
+                    raise WeatherError("Open-Meteo rate limit exceeded")
+                try:
+                    wait = min(float(resp.headers.get("Retry-After", "")), MAX_RETRY_AFTER_S)
+                except ValueError:
+                    wait = RATE_LIMIT_BACKOFF_S[rate_limited]
+                log.warning("Open-Meteo 429, retrying in %.1fs (%d/%d)", wait, rate_limited + 1, RATE_LIMIT_RETRIES)
+                rate_limited += 1
+                attempt -= 1  # a 429 does not use up the normal retry budget
+                _sleep(wait)
+                continue
             elif resp.status_code >= 400:
                 raise WeatherError(f"Open-Meteo rejected the request ({resp.status_code})")
             else:

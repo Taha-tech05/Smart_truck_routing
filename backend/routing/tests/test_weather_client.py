@@ -180,9 +180,27 @@ def test_4xx_not_retried():
 
 @respx.mock
 def test_rate_limit_error():
-    respx.get(OPEN_METEO_BASE_URL).mock(return_value=httpx.Response(429))
+    route = respx.get(OPEN_METEO_BASE_URL).mock(return_value=httpx.Response(429))
     with pytest.raises(wc.WeatherError, match="rate limit"):
         wc.get_hourly_weather([(30.0, -100.0)])
+    assert route.call_count == 1 + wc.RATE_LIMIT_RETRIES  # retried with backoff, then gave up
+
+
+@respx.mock
+def test_rate_limit_then_success_honours_retry_after(monkeypatch):
+    waits = []
+    monkeypatch.setattr(wc, "_sleep", waits.append)
+    calls = {"n": 0}
+
+    def throttled(request):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return httpx.Response(429, headers={"Retry-After": "3"} if calls["n"] == 1 else {})
+        return handler(request)
+
+    respx.get(OPEN_METEO_BASE_URL).mock(side_effect=throttled)
+    assert wc.get_hourly_weather([(30.0, -100.0)])[(30.0, -100.0)]
+    assert waits == [3.0, wc.RATE_LIMIT_BACKOFF_S[1]]
 
 
 @respx.mock
