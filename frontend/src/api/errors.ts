@@ -41,6 +41,13 @@ export function normalizeError(e: unknown): AppError {
         retryable: false,
         userFacing: true,
       }
+    if (body?.code === 'weather_unavailable' && /daily/i.test(body.message ?? ''))
+      return {
+        code: 'weather_unavailable',
+        message: 'The weather service has reached its daily limit for this server. Please try again tomorrow.',
+        retryable: false,
+        userFacing: true,
+      }
     if (body?.code === 'no_route')
       return {
         code: 'no_route',

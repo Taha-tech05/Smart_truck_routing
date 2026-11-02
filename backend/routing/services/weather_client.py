@@ -168,6 +168,13 @@ def _fetch_chunk(keys: list[CacheKey], forecast_days: int) -> list[list[HourlyRe
                 last_error = f"server error ({resp.status_code})"
             elif resp.status_code == 429:
                 # Shared cloud IPs get throttled: wait (honouring Retry-After) and try again.
+                if "daily" in resp.text.lower():
+                    # A daily quota cannot recover within this request: fail fast, don't wait.
+                    log.error("Open-Meteo DAILY limit reached keyed=%s: %s", bool(api_key), resp.text[:200])
+                    raise WeatherError(
+                        "Open-Meteo daily request limit reached for this server. "
+                        "Try again tomorrow, or configure OPEN_METEO_API_KEY"
+                    )
                 if rate_limited >= RATE_LIMIT_RETRIES:
                     raise WeatherError("Open-Meteo rate limit exceeded")
                 try:

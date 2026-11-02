@@ -275,3 +275,12 @@ def test_api_key_switches_to_customer_host(settings):
     route = respx.get(wc.OPEN_METEO_CUSTOMER_URL).mock(side_effect=handler)
     assert wc.get_hourly_weather([(30.0, -100.0)])[(30.0, -100.0)]
     assert route.calls[0].request.url.params["apikey"] == "k-123"
+
+
+@respx.mock
+def test_daily_limit_fails_fast_without_retries():
+    route = respx.get(OPEN_METEO_BASE_URL).mock(return_value=httpx.Response(
+        429, json={"error": True, "reason": "Daily API request limit exceeded. Please try again tomorrow."}))
+    with pytest.raises(wc.WeatherError, match="daily request limit"):
+        wc.get_hourly_weather([(30.0, -100.0)])
+    assert route.call_count == 1
