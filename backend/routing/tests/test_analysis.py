@@ -167,3 +167,34 @@ def test_analyze_requests_two_decimal_coordinates(fixture_json):
     lats = [x for c in route.calls for x in c.request.url.params["latitude"].split(",")]
     assert lats and all(len(x.split(".")[1]) <= 2 for x in lats)
     assert any(len(x.split(".")[1]) == 2 for x in lats)  # finer than 0.1 degree
+
+
+@respx.mock
+def test_steps_are_logged_and_geometry_is_capped(fixture_json, caplog, monkeypatch):
+    import logging
+
+    monkeypatch.setattr(analysis, "MAX_RESPONSE_VERTICES", 5)
+    respx.post(DIRECTIONS).mock(
+        return_value=httpx.Response(200, json=fixture_json("ors_directions_3routes.json"))
+    )
+    mock_weather(lambda lat, lng: 10.0)
+    with caplog.at_level(logging.INFO, logger="routing"):
+        out = analysis.analyze_trip(ORIGIN, DEST, DEPARTURE, 10000, 25)
+    text = caplog.text
+    for step in ("routing", "checkpoints", "weather", "ranking", "summary"):
+        assert f"analyze step={step} ok elapsed_ms=" in text
+    assert all(len(r["geometry"]["coordinates"]) <= 5 for r in out["routes"])
+
+
+@respx.mock
+def test_failing_step_and_service_are_reported(caplog):
+    import logging
+
+    from routing.services.routing_client import RoutingUpstreamError
+
+    respx.post(DIRECTIONS).mock(return_value=httpx.Response(503))
+    with caplog.at_level(logging.INFO, logger="routing"), pytest.raises(RoutingUpstreamError) as ei:
+        analysis.analyze_trip(ORIGIN, DEST, DEPARTURE, 10000, 25)
+    assert ei.value.service == "ORS routing"
+    assert "analyze step=routing FAILED error=RoutingUpstreamError" in caplog.text
+    assert "status=503" in caplog.text

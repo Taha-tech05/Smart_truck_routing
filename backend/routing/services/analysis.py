@@ -4,12 +4,16 @@ No Django imports. Returns plain JSON-serialisable dicts.
 """
 from __future__ import annotations
 
+import logging
+import time
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
 
 from ..constants import WEATHER_PRECISION_ANALYZE
 from . import routing_client, summary as summary_service, weather_client
 from .checkpoints import sample_checkpoints
+from .heatmap import simplify
 from .recommend import (
     CheckpointResult,
     RouteStats,
@@ -19,6 +23,26 @@ from .recommend import (
     rank_routes,
 )
 from .risk import RiskLevel, assess_checkpoint
+
+
+log = logging.getLogger(__name__)
+
+MAX_RESPONSE_VERTICES = 2000  # route geometry sent to the browser (checkpoints use the full line)
+
+
+@contextmanager
+def _step(name: str, **info):
+    """Log the step's elapsed time, and which step (and exception type) failed."""
+    t0 = time.perf_counter()
+    try:
+        yield
+    except Exception as exc:
+        log.error(
+            "analyze step=%s FAILED error=%s elapsed_ms=%d %s",
+            name, type(exc).__name__, (time.perf_counter() - t0) * 1000, info,
+        )
+        raise
+    log.info("analyze step=%s ok elapsed_ms=%d %s", name, (time.perf_counter() - t0) * 1000, info)
 
 
 def _level_name(level: RiskLevel) -> str:
@@ -75,21 +99,29 @@ def analyze_trip(
 
     ``origin`` / ``destination`` are dicts with ``lat`` and ``lng``.
     """
-    routes_result = routing_client.get_routes(
-        (origin["lat"], origin["lng"]), (destination["lat"], destination["lng"])
-    )
+    t_total = time.perf_counter()
+    with _step("routing"):
+        routes_result = routing_client.get_routes(
+            (origin["lat"], origin["lng"]), (destination["lat"], destination["lng"])
+        )
     routes = routes_result.routes
     warnings = list(routes_result.warnings)
+    log.info(
+        "analyze routes=%d vertices=%s", len(routes), [len(r.coordinates) for r in routes]
+    )
 
-    sampled = [
-        sample_checkpoints(r.coordinates, r.duration_s, departure, interval_miles)
-        for r in routes
-    ]
+    with _step("checkpoints"):
+        sampled = [
+            sample_checkpoints(r.coordinates, r.duration_s, departure, interval_miles)
+            for r in routes
+        ]
 
     # One batched weather call for every checkpoint of every route (the weather
     # client de-duplicates and caches overlapping points).
     queries = [(cp.lat, cp.lng, cp.eta) for cps in sampled for cp in cps]
-    weather = weather_client.weather_at(queries, precision=WEATHER_PRECISION_ANALYZE)
+    with _step("weather", points=len(queries)):
+        weather = weather_client.weather_at(queries, precision=WEATHER_PRECISION_ANALYZE)
+    del queries
 
     route_payloads: dict[str, dict[str, Any]] = {}
     ranked_input: list[tuple[str, RouteStats]] = []
@@ -116,21 +148,25 @@ def analyze_trip(
             "duration_s": round(route.duration_s),
             "geometry": {
                 "type": "LineString",
-                "coordinates": [[lng, lat] for lng, lat in route.coordinates],
+                "coordinates": [[lng, lat] for lng, lat in simplify(route.coordinates, MAX_RESPONSE_VERTICES)],
             },
             "stats": _stats_dict(stats),
             "checkpoints": cp_dicts,
         }
 
-    ranked = rank_routes(ranked_input)
+    del weather, sampled  # large intermediates are no longer needed
+    with _step("ranking"):
+        ranked = rank_routes(ranked_input)
 
     # Descriptive titles ("Via Amarillo, TX") and "+1 h 14 min vs fastest"; never fails the analysis.
     by_id = {r.id: r for r in routes}
-    names = summary_service.build_summaries(
-        [summary_service.RouteInput(rid, by_id[rid].coordinates, by_id[rid].duration_s) for rid, _ in ranked],
-        origin,
-        destination,
-    )
+    with _step("summary"):
+        names = summary_service.build_summaries(
+            [summary_service.RouteInput(rid, by_id[rid].coordinates, by_id[rid].duration_s) for rid, _ in ranked],
+            origin,
+            destination,
+        )
+    del by_id, routes, routes_result  # full-resolution geometry can be freed now
     warnings.extend(names.warnings)
     for rid, text in names.summaries.items():
         route_payloads[rid]["summary"] = text
@@ -150,6 +186,7 @@ def analyze_trip(
             "the last available forecast hour was used for them."
         )
 
+    log.info("analyze done total_ms=%d", (time.perf_counter() - t_total) * 1000)
     return {
         "routes": out_routes,
         "recommendation": {

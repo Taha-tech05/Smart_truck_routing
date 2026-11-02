@@ -1,6 +1,8 @@
 """Consistent API error format: ``{"error": {"code", "message"}}``."""
 from __future__ import annotations
 
+import logging
+
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -17,8 +19,21 @@ from .services.routing_client import (
 from .services.weather_client import WeatherError
 
 
-def _body(code: str, message: str, details=None) -> dict:
+log = logging.getLogger(__name__)
+
+
+def _redact(text: str) -> str:
+    """Never let the ORS key reach a response body, even by accident."""
+    from django.conf import settings
+
+    key = getattr(settings, "ORS_API_KEY", "")
+    return text.replace(key, "[redacted]") if key else text
+
+
+def _body(code: str, message: str, details=None, service: str | None = None) -> dict:
     err = {"code": code, "message": message}
+    if service:
+        err["service"] = service
     if details is not None:
         err["details"] = details
     return {"error": err}
@@ -56,10 +71,16 @@ def api_exception_handler(exc, context):
     ]
     for cls, http_status, code in mapping:
         if isinstance(exc, cls):
-            return Response(_body(code, str(exc)), status=http_status)
+            service = getattr(exc, "service", None)
+            message = _redact(str(exc))
+            if http_status >= 500 and service:
+                message = f"{service} failed: {message}"
+                log.error("analyze upstream error service=%r code=%s type=%s", service, code, type(exc).__name__)
+            return Response(_body(code, message, service=service), status=http_status)
 
     response = drf_exception_handler(exc, context)
     if response is None:
+        log.exception("unhandled error in %s", getattr(context.get("view"), "__class__", type(None)).__name__)
         return None  # unexpected error -> normal 500 handling
     if isinstance(exc, ValidationError):
         response.data = _body("validation_error", _first_message(exc.detail), exc.detail)

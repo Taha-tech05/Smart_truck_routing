@@ -25,7 +25,9 @@ it found plus a ``warnings`` list.
 """
 from __future__ import annotations
 
+import logging
 import math
+import time
 from dataclasses import dataclass, field
 
 import httpx
@@ -58,8 +60,14 @@ SAMPLE_POINTS = 40
 
 # ---------------------------------------------------------------- errors
 
+log = logging.getLogger(__name__)
+
+
 class RoutingError(Exception):
     """Base class for all ORS routing/geocoding failures."""
+
+    #: which upstream failed; set by ors_request ("ORS routing" / "ORS geocode")
+    service = "OpenRouteService"
 
 
 class RoutingAuthError(RoutingError):
@@ -122,7 +130,36 @@ def _get_client() -> httpx.Client:
     return _client
 
 
+def _service_for(path: str) -> str:
+    if path.startswith("/geocode"):
+        return "ORS geocode"
+    if path.startswith("/v2/directions"):
+        return "ORS routing"
+    return "OpenRouteService"
+
+
 def ors_request(
+    method: str,
+    path: str,
+    **kwargs,
+) -> dict:
+    """Perform an ORS request; logs service, status and elapsed time, tags failures with the service."""
+    service = _service_for(path)
+    t0 = time.perf_counter()
+    try:
+        data = _ors_request(method, path, **kwargs)
+    except RoutingError as exc:
+        exc.service = service
+        log.warning(
+            "upstream failed service=%r path=%s error=%s elapsed_ms=%d",
+            service, path, type(exc).__name__, (time.perf_counter() - t0) * 1000,
+        )
+        raise
+    log.info("upstream ok service=%r path=%s elapsed_ms=%d", service, path, (time.perf_counter() - t0) * 1000)
+    return data
+
+
+def _ors_request(
     method: str,
     path: str,
     *,
@@ -146,9 +183,12 @@ def ors_request(
     except httpx.TimeoutException as exc:
         raise RoutingTimeoutError("OpenRouteService timed out") from exc
     except httpx.HTTPError as exc:
-        raise RoutingUpstreamError(f"Could not reach OpenRouteService: {exc}") from exc
+        log.warning("ORS network error type=%s path=%s", type(exc).__name__, path)
+        raise RoutingUpstreamError(f"Could not reach OpenRouteService ({type(exc).__name__})") from exc
 
     status = resp.status_code
+    if status >= 400:
+        log.warning("ORS responded status=%s path=%s", status, path)
     if status in (401, 403):
         raise RoutingAuthError("OpenRouteService rejected the API key")
     if status == 429:

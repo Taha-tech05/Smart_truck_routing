@@ -82,7 +82,12 @@ def test_upstream_errors_mapped(monkeypatch, exc, status, code):
     monkeypatch.setattr(views, "analyze_trip", boom)
     r = client.post("/api/analyze", body(), format="json")
     assert r.status_code == status
-    assert r.json() == {"error": {"code": code, "message": str(exc)}}
+    err = r.json()["error"]
+    assert err["code"] == code
+    assert str(exc) in err["message"]
+    if status == 502:
+        # the 502 body names the failing service
+        assert err["service"] == exc.service and err["message"].startswith(f"{exc.service} failed:")
 
 
 def test_geocode_success(monkeypatch):

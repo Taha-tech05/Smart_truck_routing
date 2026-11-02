@@ -19,6 +19,7 @@ Open-Meteo are the rounded ones.
 """
 from __future__ import annotations
 
+import logging
 import math
 import threading
 import time
@@ -41,8 +42,13 @@ Point = tuple[float, float]  # (lat, lng)
 CacheKey = tuple[int, float, float]  # (precision, lat, lng)
 
 
+log = logging.getLogger(__name__)
+
+
 class WeatherError(Exception):
     """Weather data could not be retrieved."""
+
+    service = "Open-Meteo"
 
 
 @dataclass(frozen=True)
@@ -132,9 +138,12 @@ def _fetch_chunk(keys: list[CacheKey], forecast_days: int) -> list[list[HourlyRe
             resp = _get_client().get(OPEN_METEO_BASE_URL, params=params, timeout=HTTP_TIMEOUT_S)
         except httpx.TimeoutException:
             last_error = "request timed out"
+            log.warning("Open-Meteo timeout attempt=%d locations=%d", attempt + 1, len(keys))
         except httpx.HTTPError as exc:
-            last_error = f"network error: {exc}"
+            last_error = f"network error ({type(exc).__name__})"
+            log.warning("Open-Meteo network error type=%s attempt=%d", type(exc).__name__, attempt + 1)
         else:
+            log.info("Open-Meteo status=%s attempt=%d locations=%d", resp.status_code, attempt + 1, len(keys))
             if resp.status_code >= 500:
                 last_error = f"server error ({resp.status_code})"
             elif resp.status_code == 429:
