@@ -40,6 +40,9 @@ CORS_ALLOWED_ORIGINS = _csv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http:
 ORS_API_KEY = os.environ.get("ORS_API_KEY", "")
 # Optional paid Open-Meteo key (uses customer-api.open-meteo.com); the free tier is rate limited per IP.
 OPEN_METEO_API_KEY = os.environ.get("OPEN_METEO_API_KEY", "")
+# Free fallback (MET Norway) when Open-Meteo is over quota / throttled. MET requires an identifying User-Agent.
+WEATHER_FALLBACK_ENABLED = os.environ.get("WEATHER_FALLBACK_ENABLED", "True").lower() in ("1", "true", "yes")
+MET_USER_AGENT = os.environ.get("MET_USER_AGENT", "")
 
 
 # Application definition

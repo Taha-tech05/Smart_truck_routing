@@ -12,7 +12,8 @@ UTC = timezone.utc
 
 
 @pytest.fixture(autouse=True)
-def _clean(monkeypatch):
+def _clean(monkeypatch, settings):
+    settings.WEATHER_FALLBACK_ENABLED = False  # fallback has its own tests (test_met_fallback.py)
     wc.clear_cache()
     monkeypatch.setattr(wc, "_sleep", lambda s: None)
     yield

@@ -60,6 +60,8 @@ It checks health, the CORS preflight from your Vercel origin, and a real Dallas 
 | `SECRET_KEY` | Render (secret) | long random string |
 | `ORS_API_KEY` | Render (secret) | OpenRouteService key |
 | `DEBUG` | Render | `False` (set by `render.yaml`) |
+| `OPEN_METEO_API_KEY` | Render (optional) | paid Open-Meteo key; without it the free API is used |
+| `MET_USER_AGENT` | Render (optional) | identifies you to the MET Norway fallback, e.g. `my-app/1.0 you@example.com` |
 | `HTTPS_ONLY` | Render | `True` (set by `render.yaml`): redirects http -> https, Secure cookies |
 | `ALLOWED_HOSTS` | Render | backend hostname(s), comma-separated |
 | `CORS_ALLOWED_ORIGINS` | Render | frontend origin(s), comma-separated |
@@ -71,3 +73,5 @@ It checks health, the CORS preflight from your Vercel origin, and a real Dallas 
 - **`DisallowedHost` / HTTP 400 from the API:** add the hostname to `ALLOWED_HOSTS`.
 - **Analyze says the routing service rejected the key:** wrong `ORS_API_KEY`, or the ORS daily quota is used up.
 - **Frontend still calls localhost:** `VITE_API_BASE_URL` was missing at build time; set it and redeploy.
+
+- **Weather daily limit on Render:** Open-Meteo's free quota is per IP, and Render IPs are shared. The backend then falls back to MET Norway automatically (the response carries a warning). Set `MET_USER_AGENT` to something that identifies you.

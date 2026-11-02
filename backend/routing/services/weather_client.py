@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
+from . import met_norway
 from ..constants import HTTP_TIMEOUT_S, OPEN_METEO_BASE_URL, WEATHER_PRECISION_DEFAULT
 
 CHUNK_SIZE = 50
@@ -54,12 +55,17 @@ class WeatherError(Exception):
     service = "Open-Meteo"
 
 
+class WeatherUnavailable(WeatherError):
+    """Open-Meteo is throttled, over quota or down: the MET Norway fallback may be used."""
+
+
 @dataclass(frozen=True)
 class HourlyRecord:
     time_utc: datetime
     wind_mph: float
     rain_in_hr: float
     snow_in_hr: float
+    source: str = "open-meteo"
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,7 @@ class WeatherAtEta:
     rain_in_hr: float
     snow_in_hr: float
     beyond_forecast: bool
+    source: str = "open-meteo"
 
 
 # ---------------------------------------------------------------- cache
@@ -86,6 +93,8 @@ def _sleep(seconds: float) -> None:
 
 
 def clear_cache() -> None:
+    global _blocked_until
+    _blocked_until = 0.0
     with _cache_lock:
         _cache.clear()
 
@@ -125,6 +134,42 @@ def _get_client() -> httpx.Client:
 
 
 OPEN_METEO_CUSTOMER_URL = "https://customer-api.open-meteo.com/v1/forecast"
+BLOCK_AFTER_DAILY_LIMIT_S = 60 * 60
+
+# After a daily-limit 429, skip Open-Meteo for a while (monotonic deadline) and go straight to the fallback.
+_blocked_until = 0.0
+
+
+def _block_open_meteo() -> None:
+    global _blocked_until
+    _blocked_until = _now() + BLOCK_AFTER_DAILY_LIMIT_S
+
+
+def _fallback_enabled() -> bool:
+    from django.conf import settings
+
+    return bool(getattr(settings, "WEATHER_FALLBACK_ENABLED", True))
+
+
+def _fetch_with_fallback(keys: list[CacheKey], forecast_days: int) -> list[list[HourlyRecord]]:
+    """Open-Meteo first; MET Norway when Open-Meteo is over quota, throttled or down."""
+    primary_error: WeatherError | None = None
+    if _now() < _blocked_until and _fallback_enabled():
+        primary_error = WeatherUnavailable("Open-Meteo daily request limit reached (skipped)")
+    else:
+        try:
+            return _fetch_chunk(keys, forecast_days)
+        except WeatherUnavailable as exc:
+            if not _fallback_enabled():
+                raise
+            primary_error = exc
+    log.warning("falling back to MET Norway (%s) locations=%d", primary_error, len(keys))
+    try:
+        return met_norway.fetch_locations([(k[1], k[2]) for k in keys], HourlyRecord)
+    except met_norway.MetError as exc:
+        log.error("MET Norway fallback failed: %s", exc)
+        raise WeatherError(f"{primary_error}; fallback MET Norway also failed: {exc}") from exc
+
 
 
 def _api_key() -> str:
@@ -171,12 +216,13 @@ def _fetch_chunk(keys: list[CacheKey], forecast_days: int) -> list[list[HourlyRe
                 if "daily" in resp.text.lower():
                     # A daily quota cannot recover within this request: fail fast, don't wait.
                     log.error("Open-Meteo DAILY limit reached keyed=%s: %s", bool(api_key), resp.text[:200])
-                    raise WeatherError(
+                    _block_open_meteo()
+                    raise WeatherUnavailable(
                         "Open-Meteo daily request limit reached for this server. "
                         "Try again tomorrow, or configure OPEN_METEO_API_KEY"
                     )
                 if rate_limited >= RATE_LIMIT_RETRIES:
-                    raise WeatherError("Open-Meteo rate limit exceeded")
+                    raise WeatherUnavailable("Open-Meteo rate limit exceeded")
                 try:
                     wait = min(float(resp.headers.get("Retry-After", "")), MAX_RETRY_AFTER_S)
                 except ValueError:
@@ -195,7 +241,7 @@ def _fetch_chunk(keys: list[CacheKey], forecast_days: int) -> list[list[HourlyRe
                 return _parse(resp, len(keys))
         if attempt < MAX_RETRIES:
             _sleep(BACKOFF_S[min(attempt, len(BACKOFF_S) - 1)])
-    raise WeatherError(f"Open-Meteo unavailable: {last_error}")
+    raise WeatherUnavailable(f"Open-Meteo unavailable: {last_error}")
 
 
 def _parse(resp: httpx.Response, expected: int) -> list[list[HourlyRecord]]:
@@ -258,7 +304,7 @@ def get_hourly_weather(
     chunks = [missing[i : i + CHUNK_SIZE] for i in range(0, len(missing), CHUNK_SIZE)]
     if chunks:
         with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(chunks))) as pool:
-            results = list(pool.map(lambda c: _fetch_chunk(c, forecast_days), chunks))
+            results = list(pool.map(lambda c: _fetch_with_fallback(c, forecast_days), chunks))
         for chunk, chunk_records in zip(chunks, results):
             for key, records in zip(chunk, chunk_records):
                 _cache_put(key, records)
@@ -301,5 +347,5 @@ def weather_at(
     out: list[WeatherAtEta] = []
     for lat, lng, eta in points_with_etas:
         rec, beyond = nearest_record(hourly[(lat, lng)], eta)
-        out.append(WeatherAtEta(rec.time_utc, rec.wind_mph, rec.rain_in_hr, rec.snow_in_hr, beyond))
+        out.append(WeatherAtEta(rec.time_utc, rec.wind_mph, rec.rain_in_hr, rec.snow_in_hr, beyond, rec.source))
     return out

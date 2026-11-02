@@ -154,6 +154,10 @@ def analyze_trip(
             "checkpoints": cp_dicts,
         }
 
+    if any(w.source != "open-meteo" for w in weather):
+        warnings.append(
+            "Open-Meteo was unavailable, so weather came from MET Norway (slightly different forecast model)."
+        )
     del weather, sampled  # large intermediates are no longer needed
     with _step("ranking"):
         ranked = rank_routes(ranked_input)

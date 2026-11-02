@@ -192,6 +192,11 @@ def build_heatmap(
             "filled with the previous hour's level."
         )
 
+    if any(r.source != "open-meteo" for p in pts for r in hourly[p][:1]):
+        warnings.append(
+            "Open-Meteo was unavailable, so weather came from MET Norway (slightly different forecast model)."
+        )
+
     summary = []
     for h in range(len(slots)):
         counts = [0] * len(RiskLevel)
