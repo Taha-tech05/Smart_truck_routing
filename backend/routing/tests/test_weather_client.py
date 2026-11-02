@@ -267,3 +267,11 @@ def test_weather_at_passes_precision_through():
     eta = datetime(2026, 11, 2, 13, 0, tzinfo=UTC)
     [w] = wc.weather_at([(35.04, -100.0, eta)], precision=2)
     assert requested_lats(route) == [35.04] and w.wind_mph == pytest.approx(35.04 + 0.13)
+
+
+@respx.mock
+def test_api_key_switches_to_customer_host(settings):
+    settings.OPEN_METEO_API_KEY = "k-123"
+    route = respx.get(wc.OPEN_METEO_CUSTOMER_URL).mock(side_effect=handler)
+    assert wc.get_hourly_weather([(30.0, -100.0)])[(30.0, -100.0)]
+    assert route.calls[0].request.url.params["apikey"] == "k-123"

@@ -124,6 +124,15 @@ def _get_client() -> httpx.Client:
     return _client
 
 
+OPEN_METEO_CUSTOMER_URL = "https://customer-api.open-meteo.com/v1/forecast"
+
+
+def _api_key() -> str:
+    from django.conf import settings
+
+    return getattr(settings, "OPEN_METEO_API_KEY", "") or ""
+
+
 def _fetch_chunk(keys: list[CacheKey], forecast_days: int) -> list[list[HourlyRecord]]:
     """Fetch one batch of locations (with retries); returns records per key, in order."""
     params = {
@@ -135,13 +144,18 @@ def _fetch_chunk(keys: list[CacheKey], forecast_days: int) -> list[list[HourlyRe
         "timezone": "UTC",
         "forecast_days": forecast_days,
     }
+    url = OPEN_METEO_BASE_URL
+    api_key = _api_key()
+    if api_key:  # paid plan: dedicated host and its own quota instead of the shared free IP pool
+        params["apikey"] = api_key
+        url = OPEN_METEO_CUSTOMER_URL
     last_error = "unknown error"
     rate_limited = 0
     attempt = -1
     while attempt < MAX_RETRIES:
         attempt += 1
         try:
-            resp = _get_client().get(OPEN_METEO_BASE_URL, params=params, timeout=HTTP_TIMEOUT_S)
+            resp = _get_client().get(url, params=params, timeout=HTTP_TIMEOUT_S)
         except httpx.TimeoutException:
             last_error = "request timed out"
             log.warning("Open-Meteo timeout attempt=%d locations=%d", attempt + 1, len(keys))
@@ -160,7 +174,10 @@ def _fetch_chunk(keys: list[CacheKey], forecast_days: int) -> list[list[HourlyRe
                     wait = min(float(resp.headers.get("Retry-After", "")), MAX_RETRY_AFTER_S)
                 except ValueError:
                     wait = RATE_LIMIT_BACKOFF_S[rate_limited]
-                log.warning("Open-Meteo 429, retrying in %.1fs (%d/%d)", wait, rate_limited + 1, RATE_LIMIT_RETRIES)
+                log.warning(
+                    "Open-Meteo 429 (%s), retrying in %.1fs (%d/%d) keyed=%s",
+                    resp.text[:200].replace("\n", " "), wait, rate_limited + 1, RATE_LIMIT_RETRIES, bool(api_key),
+                )
                 rate_limited += 1
                 attempt -= 1  # a 429 does not use up the normal retry budget
                 _sleep(wait)

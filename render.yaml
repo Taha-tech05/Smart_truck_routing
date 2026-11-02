@@ -12,6 +12,8 @@ services:
         sync: false          # you enter it in the Render dashboard
       - key: ORS_API_KEY
         sync: false          # you enter it in the Render dashboard
+      - key: OPEN_METEO_API_KEY
+        sync: false          # optional: paid Open-Meteo key; leave empty to use the free API
       - key: DEBUG
         value: "False"
       - key: HTTPS_ONLY

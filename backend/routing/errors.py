@@ -26,8 +26,11 @@ def _redact(text: str) -> str:
     """Never let the ORS key reach a response body, even by accident."""
     from django.conf import settings
 
-    key = getattr(settings, "ORS_API_KEY", "")
-    return text.replace(key, "[redacted]") if key else text
+    for name in ("ORS_API_KEY", "OPEN_METEO_API_KEY"):
+        key = getattr(settings, name, "")
+        if key:
+            text = text.replace(key, "[redacted]")
+    return text
 
 
 def _body(code: str, message: str, details=None, service: str | None = None) -> dict:

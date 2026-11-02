@@ -38,6 +38,8 @@ if os.environ.get("RENDER_EXTERNAL_HOSTNAME"):
     ALLOWED_HOSTS.append(os.environ["RENDER_EXTERNAL_HOSTNAME"])
 CORS_ALLOWED_ORIGINS = _csv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
 ORS_API_KEY = os.environ.get("ORS_API_KEY", "")
+# Optional paid Open-Meteo key (uses customer-api.open-meteo.com); the free tier is rate limited per IP.
+OPEN_METEO_API_KEY = os.environ.get("OPEN_METEO_API_KEY", "")
 
 
 # Application definition
