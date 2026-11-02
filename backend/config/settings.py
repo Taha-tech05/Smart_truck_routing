@@ -33,6 +33,9 @@ def _csv(name, default=""):
 SECRET_KEY = os.environ.get("SECRET_KEY", "insecure-dev-key")
 DEBUG = os.environ.get("DEBUG", "False").lower() in ("1", "true", "yes")
 ALLOWED_HOSTS = _csv("ALLOWED_HOSTS", "localhost,127.0.0.1")
+# Render exposes the service's public hostname here; allow it automatically.
+if os.environ.get("RENDER_EXTERNAL_HOSTNAME"):
+    ALLOWED_HOSTS.append(os.environ["RENDER_EXTERNAL_HOSTNAME"])
 CORS_ALLOWED_ORIGINS = _csv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
 ORS_API_KEY = os.environ.get("ORS_API_KEY", "")
 
@@ -136,6 +139,21 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    # WhiteNoise: serves collected files pre-compressed; no manifest needed
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedStaticFilesStorage"},
+}
+
+# ---- HTTPS behind a reverse proxy (Render terminates TLS and sets X-Forwarded-Proto) ----
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+# HTTPS_ONLY=True in production: redirect http -> https and mark cookies Secure.
+# Off by default so a plain-http local or Docker run keeps working. Health checks are exempt.
+HTTPS_ONLY = os.environ.get("HTTPS_ONLY", "False").lower() in ("1", "true", "yes")
+SECURE_SSL_REDIRECT = HTTPS_ONLY
+SECURE_REDIRECT_EXEMPT = [r"^api/health/?$"]
+SESSION_COOKIE_SECURE = HTTPS_ONLY
+CSRF_COOKIE_SECURE = HTTPS_ONLY
 
 
 REST_FRAMEWORK = {
