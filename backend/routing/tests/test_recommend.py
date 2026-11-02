@@ -152,3 +152,13 @@ def test_route_id_naming_and_single_route():
 def test_empty_recommendation_raises():
     with pytest.raises(ValueError):
         build_recommendation([])
+
+
+def test_explanation_uses_route_summaries():
+    ranked = rank_routes([("route-1", stats(0, 0, hours=10)), ("route-2", stats(0, 0, hours=7.0))])
+    names = {"route-1": "Via Tulsa", "route-2": "Via Amarillo, TX"}
+    rec = build_recommendation(ranked, names)
+    assert rec.route_id == "route-2"
+    assert rec.explanation == "Same weather risk as Via Tulsa but 3 h faster"
+    # missing summary -> falls back to "Route N"
+    assert build_recommendation(ranked, {"route-2": "Via X"}).explanation.endswith("as Route 1 but 3 h faster")

@@ -130,6 +130,7 @@ def ors_request(
     params: dict | None = None,
     json: dict | None = None,
     base_url: str = ORS_BASE_URL,
+    timeout: float = HTTP_TIMEOUT_S,
 ) -> dict:
     """Perform an ORS request and map failures to RoutingError subclasses."""
     headers = {"Authorization": _api_key(api_key)}
@@ -140,7 +141,7 @@ def ors_request(
             params=params,
             json=json,
             headers=headers,
-            timeout=HTTP_TIMEOUT_S,
+            timeout=timeout,
         )
     except httpx.TimeoutException as exc:
         raise RoutingTimeoutError("OpenRouteService timed out") from exc

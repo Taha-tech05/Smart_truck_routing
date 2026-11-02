@@ -7,11 +7,19 @@ import respx
 
 from routing.constants import ORS_BASE_URL, OPEN_METEO_BASE_URL
 from routing.services import analysis, weather_client
+from routing.services import summary as summary_service
 
 DIRECTIONS = f"{ORS_BASE_URL}/v2/directions/driving-hgv/geojson"
 ORIGIN = {"lat": 40.0, "lng": -100.0, "label": "A"}
 DEST = {"lat": 41.5, "lng": -100.0, "label": "B"}
 DEPARTURE = datetime(2026, 11, 2, 8, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def _no_reverse_geocode(monkeypatch):
+    """Summaries are tested in test_summary.py; here the reverse geocoder finds nothing."""
+    monkeypatch.setattr(summary_service, "reverse_locality", lambda lat, lng, key=None: None)
+    summary_service.clear_cache()
 
 
 @pytest.fixture(autouse=True)

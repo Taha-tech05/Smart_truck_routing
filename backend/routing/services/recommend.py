@@ -97,7 +97,9 @@ def rank_routes(routes: list[RankedRoute]) -> list[RankedRoute]:
     return sorted(routes, key=lambda item: _key(item[1]))
 
 
-def _name(route_id: str) -> str:
+def _name(route_id: str, names: dict[str, str] | None = None) -> str:
+    if names and names.get(route_id):
+        return names[route_id]
     if route_id.lower().startswith("route"):
         return route_id.replace("-", " ").replace("_", " ").title()
     return f"Route {route_id}"
@@ -115,8 +117,12 @@ def _duration_text(seconds: float) -> str:
     return f"{minutes} minutes"
 
 
-def build_recommendation(ranked: list[RankedRoute]) -> Recommendation:
-    """Explain why the top-ranked route beats the runner-up, in plain English."""
+def build_recommendation(
+    ranked: list[RankedRoute], names: dict[str, str] | None = None
+) -> Recommendation:
+    """Explain why the top-ranked route beats the runner-up, in plain English.
+
+    ``names`` maps route id -> descriptive summary (falls back to "Route N")."""
     if not ranked:
         raise ValueError("no routes to recommend")
     win_id, win = ranked[0]
@@ -134,7 +140,7 @@ def build_recommendation(ranked: list[RankedRoute]) -> Recommendation:
         return Recommendation(win_id, "Only one route is available.", False)
 
     run_id, run = ranked[1]
-    rn = _name(run_id)
+    rn = _name(run_id, names)
     if win.has_no_travel != run.has_no_travel:
         text = f"Avoids No Travel conditions that occur on {rn}"
     elif round(win.severe_miles, 1) != round(run.severe_miles, 1):

@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from ..constants import WEATHER_PRECISION_ANALYZE
-from . import routing_client, weather_client
+from . import routing_client, summary as summary_service, weather_client
 from .checkpoints import sample_checkpoints
 from .recommend import (
     CheckpointResult,
@@ -123,7 +123,19 @@ def analyze_trip(
         }
 
     ranked = rank_routes(ranked_input)
-    rec = build_recommendation(ranked)
+
+    # Descriptive titles ("Via Amarillo, TX") and "+1 h 14 min vs fastest"; never fails the analysis.
+    by_id = {r.id: r for r in routes}
+    names = summary_service.build_summaries(
+        [summary_service.RouteInput(rid, by_id[rid].coordinates, by_id[rid].duration_s) for rid, _ in ranked],
+        origin,
+        destination,
+    )
+    warnings.extend(names.warnings)
+    for rid, text in names.summaries.items():
+        route_payloads[rid]["summary"] = text
+        route_payloads[rid]["delta_label"] = names.delta_labels[rid]
+    rec = build_recommendation(ranked, names.summaries)
 
     out_routes = []
     for rank, (route_id, _stats) in enumerate(ranked, start=1):
