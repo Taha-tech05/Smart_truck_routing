@@ -24,7 +24,8 @@ For hot reload while developing: `docker compose -f docker-compose.yml -f docker
 | Service | Used for | Key |
 | --- | --- | --- |
 | OpenRouteService | truck routing, place search, route place names | `ORS_API_KEY` (free tier has daily quotas) |
-| Open-Meteo | wind / rain / snow forecast | none |
+| Open-Meteo | wind / rain / snow forecast | none (optional paid `OPEN_METEO_API_KEY`) |
+| MET Norway | automatic fallback forecast | none (set `MET_USER_AGENT`) |
 | OpenFreeMap (and the CARTO dark style) | map tiles | none |
 
 **Common problems**
@@ -67,13 +68,15 @@ npm run dev                 # http://localhost:5173
 ```
 backend/routing/
   constants.py            single source of truth (units, intervals, base URLs, timeouts)
-  errors.py               unified error envelope {"error": {"code", "message"}}
+  errors.py               unified error envelope {"error": {"code", "message", "service"?}}
   serializers.py          request validation (DRF)
   views.py / urls.py      GET /api/health, GET /api/geocode, POST /api/analyze
   services/
     geocoding.py          ORS geocode + autocomplete            (HTTP)
     routing_client.py     ORS directions, alternatives fallback (HTTP)
-    weather_client.py     Open-Meteo, batching + cache          (HTTP)
+    weather_client.py     Open-Meteo, batching + cache + fallback (HTTP)
+    met_norway.py         MET Norway fallback forecast          (HTTP)
+    summary.py            route titles ("Via Amarillo, TX") + delta labels (HTTP, reverse geocode)
     checkpoints.py        sampling, ETA, coverage               (pure)
     risk.py               threshold + load rules                (pure)
     recommend.py          route stats, ranking, explanation     (pure)
@@ -81,7 +84,7 @@ backend/routing/
 ```
 
 `risk.py`, `checkpoints.py` and `recommend.py` are pure (no I/O, no Django). All HTTP uses
-`httpx` with 10 s timeouts and lives only in the three client files. Units are miles, mph,
+`httpx` with 10 s timeouts and lives only in the client files (ORS, Open-Meteo, MET Norway, summary lookups). Units are miles, mph,
 inches/hr and pounds; conversion happens at the boundary (Open-Meteo is asked for mph/inches;
 ORS metres are converted to miles in `routing_client`). Tests never touch the network
 (`respx` mocks + JSON fixtures in `routing/tests/fixtures/`).
@@ -91,7 +94,24 @@ ORS metres are converted to miles in `routing_client`). Tests never touch the ne
 - `POST /api/analyze` - `{origin, destination, departure_time (ISO 8601 with tz), load_weight_lb (0-120000), interval_miles (10|25|50, default 25)}`.
   Returns ranked routes with per-checkpoint weather and risk, a recommendation and warnings.
   Departure must be at most 1 hour in the past and at most 7 days ahead.
-- Errors: 400 validation, 429 rate-limit passthrough, 502 upstream failure.
+  Each route has `summary` (descriptive title, e.g. "Via Amarillo, TX", or "Route N" if the lookups fail) and
+  `delta_label` ("Fastest" or "+1 h 14 min vs fastest"). The route `geometry` sent back is capped at 2,000 points
+  (checkpoints are sampled from the full line first).
+- Errors: 400 validation, 429 rate-limit passthrough, 502 upstream failure. A 502 body names the failing service:
+  `{"error": {"code": "weather_unavailable", "service": "Open-Meteo", "message": "Open-Meteo failed: ..."}}`
+  (services: `ORS routing`, `ORS geocode`, `Open-Meteo`). API keys are never included.
+
+### Route summaries
+`services/summary.py` takes 3 points per route (25 %, 50 %, 75 % of its length), reverse-geocodes them
+concurrently with ORS (`/geocode/reverse`, `layers=locality`, 5 s timeout, cached by 0.1 degree), skips the origin
+and destination cities, and builds "Via X, ST" or "Via X and Y" (max 2 places). Duplicate labels get a differing
+place ("(near Tulsa)") or a side-of-line suffix. Lookup failures never fail `/api/analyze`: routes fall back to
+"Route N", and a warning is added only if every lookup failed. The recommendation text uses these titles.
+
+### Logging
+Each analyze step (`routing`, `checkpoints`, `weather`, `summary`, `ranking`) logs its elapsed time, failures log the
+step and exception type, and every upstream call logs service, status and time. Everything goes to stdout
+(`LOG_LEVEL` sets the verbosity), so it shows up in Render's log viewer.
 
 ### Risk boundary convention
 - Wind (mph, lower bound inclusive): `<25` Low, `25-<35` Moderate, `35-<45` High, `45-<55` Severe, `>=55` No Travel.
@@ -157,14 +177,30 @@ the rounded coordinates are also the ones sent to Open-Meteo. Precision is chose
 - Precision is part of the key, so the two never collide; each precision caches independently.
 Batching (50 points per request), concurrency and the 30-minute TTL are the same for both.
 
+### Weather fallback (MET Norway)
+Open-Meteo's free tier is limited per IP address, and shared hosts (Render) can use up the daily quota. When Open-Meteo
+returns a daily-limit or repeated 429, a 5xx, or times out, `weather_client` fetches the same locations from
+[MET Norway Locationforecast](https://api.met.no/) instead (free, no key, needs an identifying `MET_USER_AGENT`).
+After a daily limit Open-Meteo is skipped for an hour. MET wind (m/s) is converted to mph; MET has no snowfall field,
+so precipitation at or below 0 C counts as snow at a 10:1 ratio, otherwise as rain. 6-hourly steps are expanded to
+hourly. Responses that used the fallback carry a warning; the two models differ slightly. Set
+`WEATHER_FALLBACK_ENABLED=False` to turn it off, or set `OPEN_METEO_API_KEY` (paid plan) to use Open-Meteo's own
+quota instead. Retries on 429 use `Retry-After` / backoff; a daily limit fails over immediately.
+
 ### Forecast limits
 Open-Meteo is queried for 3 forecast days. ETAs past the end of the forecast use the last
 available hour and are flagged `beyond_forecast` (with a warning).
 
 ## Third-party APIs
 - [OpenRouteService](https://openrouteservice.org/) – geocoding and directions (needs `ORS_API_KEY`)
-- [Open-Meteo](https://open-meteo.com/) – weather forecasts (no key)
+- [Open-Meteo](https://open-meteo.com/) – weather forecasts (no key on the free tier; optional paid `OPEN_METEO_API_KEY`)
+- [MET Norway](https://api.met.no/) – fallback forecast when Open-Meteo is over quota (no key; `MET_USER_AGENT`)
 - [OpenFreeMap](https://openfreemap.org/) – vector map tiles/styles (no key)
+
+## Deployment
+See [DEPLOY.md](DEPLOY.md) (Render for the backend via `render.yaml`, Vercel for the frontend via `frontend/vercel.json`).
+The backend image runs `gunicorn --workers 1 --threads 4 --timeout 120` on `$PORT`. After deploying, verify with
+`python scripts/check_deployment.py <backend-url> <frontend-url>` (health, CORS preflight, a real Dallas -> Denver analyze).
 
 ## Frontend modes and checks
 
